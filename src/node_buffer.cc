@@ -21,6 +21,7 @@
 
 #include "node.h"
 #include "node_buffer.h"
+#include "node_errors.h"
 
 #include "env-inl.h"
 #include "string_bytes.h"
@@ -36,9 +37,12 @@
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
+#define THROW_AND_RETURN_UNLESS_BUFFER(env, obj)                            \
+  THROW_AND_RETURN_IF_NOT_BUFFER(env, obj, "argument")
+
 #define THROW_AND_RETURN_IF_OOB(r)                                          \
   do {                                                                      \
-    if (!(r)) return env->ThrowRangeError("Index out of range");            \
+    if (!(r)) return node::THROW_ERR_INDEX_OUT_OF_RANGE(env);               \
   } while (0)
 
 #define SLICE_START_END(start_arg, end_arg, end_max)                        \
@@ -136,11 +140,10 @@ CallbackInfo::CallbackInfo(Isolate* isolate,
   ArrayBuffer::Contents obj_c = object->GetContents();
   CHECK_EQ(data_, static_cast<char*>(obj_c.Data()));
   if (object->ByteLength() != 0)
-    CHECK_NE(data_, nullptr);
+    CHECK_NOT_NULL(data_);
 
   persistent_.SetWeak(this, WeakCallback, v8::WeakCallbackType::kParameter);
   persistent_.SetWrapperClassId(BUFFER_ID);
-  persistent_.MarkIndependent();
   isolate->AdjustAmountOfExternalAllocatedMemory(sizeof(*this));
 }
 
@@ -326,7 +329,7 @@ MaybeLocal<Object> Copy(Environment* env, const char* data, size_t length) {
 
   void* new_data;
   if (length > 0) {
-    CHECK_NE(data, nullptr);
+    CHECK_NOT_NULL(data);
     new_data = node::UncheckedMalloc(length);
     if (new_data == nullptr)
       return Local<Object>();
@@ -405,7 +408,7 @@ MaybeLocal<Object> New(Isolate* isolate, char* data, size_t length) {
 
 MaybeLocal<Object> New(Environment* env, char* data, size_t length) {
   if (length > 0) {
-    CHECK_NE(data, nullptr);
+    CHECK_NOT_NULL(data);
     CHECK(length <= kMaxLength);
   }
 
@@ -544,7 +547,7 @@ void Copy(const FunctionCallbackInfo<Value> &args) {
     return args.GetReturnValue().Set(0);
 
   if (source_start > ts_obj_length)
-    return env->ThrowRangeError("Index out of range");
+    return node::THROW_ERR_INDEX_OUT_OF_RANGE(env);
 
   if (source_end - source_start > target_length - target_start)
     source_end = source_start + target_length - target_start;
@@ -656,8 +659,7 @@ void StringWrite(const FunctionCallbackInfo<Value>& args) {
   THROW_AND_RETURN_UNLESS_BUFFER(env, args.This());
   SPREAD_BUFFER_ARG(args.This(), ts_obj);
 
-  if (!args[0]->IsString())
-    return env->ThrowTypeError("Argument must be a string");
+  THROW_AND_RETURN_IF_NOT_STRING(env, args[0], "argument");
 
   Local<String> str = args[0]->ToString(env->context()).ToLocalChecked();
 
@@ -665,8 +667,10 @@ void StringWrite(const FunctionCallbackInfo<Value>& args) {
   size_t max_length;
 
   THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[1], 0, &offset));
-  if (offset > ts_obj_length)
-    return env->ThrowRangeError("Offset is out of bounds");
+  if (offset > ts_obj_length) {
+    return node::THROW_ERR_BUFFER_OUT_OF_BOUNDS(
+        env, "\"offset\" is outside of buffer bounds");
+  }
 
   THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[2], ts_obj_length - offset,
                                           &max_length));
@@ -728,9 +732,9 @@ void CompareOffset(const FunctionCallbackInfo<Value> &args) {
   THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[5], ts_obj_length, &source_end));
 
   if (source_start > ts_obj_length)
-    return env->ThrowRangeError("Index out of range");
+    return node::THROW_ERR_INDEX_OUT_OF_RANGE(env);
   if (target_start > target_length)
-    return env->ThrowRangeError("Index out of range");
+    return node::THROW_ERR_INDEX_OUT_OF_RANGE(env);
 
   CHECK_LE(source_start, source_end);
   CHECK_LE(target_start, target_end);
