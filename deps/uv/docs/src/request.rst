@@ -46,13 +46,20 @@ Public members
             UV_WORK,
             UV_GETADDRINFO,
             UV_GETNAMEINFO,
-            UV_REQ_TYPE_PRIVATE,
             UV_REQ_TYPE_MAX,
         } uv_req_type;
 
 
 API
 ---
+
+.. c:macro:: UV_REQ_TYPE_MAP(iter_macro)
+
+    Macro that expands to a series of invocations of `iter_macro` for
+    each of the request types. `iter_macro` is invoked with two
+    arguments: the name of the `uv_req_type` element without the `UV_`
+    prefix, and the name of the corresponding structure type without the
+    `uv_` prefix and `_t` suffix.
 
 .. c:function:: int uv_cancel(uv_req_t* req)
 
@@ -62,8 +69,8 @@ API
     Returns 0 on success, or an error code < 0 on failure.
 
     Only cancellation of :c:type:`uv_fs_t`, :c:type:`uv_getaddrinfo_t`,
-    :c:type:`uv_getnameinfo_t` and :c:type:`uv_work_t` requests is
-    currently supported.
+    :c:type:`uv_getnameinfo_t`, :c:type:`uv_random_t` and :c:type:`uv_work_t`
+    requests is currently supported.
 
     Cancelled requests have their callbacks invoked some time in the future.
     It's **not** safe to free the memory associated with the request until the
@@ -73,8 +80,9 @@ API
 
     * A :c:type:`uv_fs_t` request has its req->result field set to `UV_ECANCELED`.
 
-    * A :c:type:`uv_work_t`, :c:type:`uv_getaddrinfo_t` or c:type:`uv_getnameinfo_t`
-      request has its callback invoked with status == `UV_ECANCELED`.
+    * A :c:type:`uv_work_t`, :c:type:`uv_getaddrinfo_t`,
+      :c:type:`uv_getnameinfo_t` or :c:type:`uv_random_t` request has its
+      callback invoked with status == `UV_ECANCELED`.
 
 .. c:function:: size_t uv_req_size(uv_req_type type)
 

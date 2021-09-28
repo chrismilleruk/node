@@ -4,16 +4,17 @@
 
 #include "test/unittests/interpreter/interpreter-assembler-unittest.h"
 
-#include "src/code-factory.h"
+#include "src/codegen/code-factory.h"
+#include "src/codegen/interface-descriptors.h"
+#include "src/compiler/node-properties.h"
 #include "src/compiler/node.h"
-#include "src/interface-descriptors.h"
-#include "src/isolate.h"
-#include "src/objects-inl.h"
+#include "src/execution/isolate.h"
+#include "src/objects/objects-inl.h"
 #include "test/unittests/compiler/compiler-test-utils.h"
 #include "test/unittests/compiler/node-test-utils.h"
 
 using ::testing::_;
-using v8::internal::compiler::Node;
+using ::testing::Eq;
 
 namespace c = v8::internal::compiler;
 
@@ -25,10 +26,9 @@ namespace interpreter_assembler_unittest {
 InterpreterAssemblerTestState::InterpreterAssemblerTestState(
     InterpreterAssemblerTest* test, Bytecode bytecode)
     : compiler::CodeAssemblerState(
-          test->isolate(), test->zone(),
-          InterpreterDispatchDescriptor(test->isolate()),
-          Code::BYTECODE_HANDLER, Bytecodes::ToString(bytecode),
-          PoisoningMitigationLevel::kOn, Bytecodes::ReturnCount(bytecode)) {}
+          test->isolate(), test->zone(), InterpreterDispatchDescriptor{},
+          CodeKind::BYTECODE_HANDLER, Bytecodes::ToString(bytecode),
+          PoisoningMitigationLevel::kPoisonCriticalOnly) {}
 
 const interpreter::Bytecode kBytecodes[] = {
 #define DEFINE_BYTECODE(Name, ...) interpreter::Bytecode::k##Name,
@@ -45,37 +45,56 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::
     GetAccumulator();
   }
   if (Bytecodes::WritesAccumulator(bytecode())) {
-    SetAccumulator(nullptr);
+    SetAccumulator(NullConstant());
+  }
+  if (Bytecodes::WritesImplicitRegister(bytecode())) {
+    StoreRegisterForShortStar(NullConstant(), IntPtrConstant(2));
   }
 }
 
-Matcher<Node*> InterpreterAssemblerTest::InterpreterAssemblerForTest::IsLoad(
+Matcher<c::Node*> InterpreterAssemblerTest::InterpreterAssemblerForTest::IsLoad(
     const Matcher<c::LoadRepresentation>& rep_matcher,
-    const Matcher<Node*>& base_matcher, const Matcher<Node*>& index_matcher,
-    LoadSensitivity needs_poisoning) {
-  if (poisoning_enabled() == PoisoningMitigationLevel::kOn &&
-      needs_poisoning == LoadSensitivity::kNeedsPoisoning) {
+    const Matcher<c::Node*>& base_matcher,
+    const Matcher<c::Node*>& index_matcher, LoadSensitivity needs_poisoning) {
+  CHECK_NE(LoadSensitivity::kUnsafe, needs_poisoning);
+  CHECK_NE(PoisoningMitigationLevel::kPoisonAll, poisoning_level());
+  if (poisoning_level() == PoisoningMitigationLevel::kPoisonCriticalOnly &&
+      needs_poisoning == LoadSensitivity::kCritical) {
     return ::i::compiler::IsPoisonedLoad(rep_matcher, base_matcher,
                                          index_matcher, _, _);
   }
   return ::i::compiler::IsLoad(rep_matcher, base_matcher, index_matcher, _, _);
 }
 
-Matcher<Node*> InterpreterAssemblerTest::InterpreterAssemblerForTest::IsStore(
+Matcher<c::Node*>
+InterpreterAssemblerTest::InterpreterAssemblerForTest::IsLoadFromObject(
+    const Matcher<c::LoadRepresentation>& rep_matcher,
+    const Matcher<c::Node*>& base_matcher,
+    const Matcher<c::Node*>& index_matcher) {
+  CHECK_NE(PoisoningMitigationLevel::kPoisonAll, poisoning_level());
+  return ::i::compiler::IsLoadFromObject(rep_matcher, base_matcher,
+                                         index_matcher, _, _);
+}
+
+Matcher<c::Node*>
+InterpreterAssemblerTest::InterpreterAssemblerForTest::IsStore(
     const Matcher<c::StoreRepresentation>& rep_matcher,
-    const Matcher<Node*>& base_matcher, const Matcher<Node*>& index_matcher,
-    const Matcher<Node*>& value_matcher) {
+    const Matcher<c::Node*>& base_matcher,
+    const Matcher<c::Node*>& index_matcher,
+    const Matcher<c::Node*>& value_matcher) {
   return ::i::compiler::IsStore(rep_matcher, base_matcher, index_matcher,
                                 value_matcher, _, _);
 }
 
-Matcher<Node*> InterpreterAssemblerTest::InterpreterAssemblerForTest::IsWordNot(
-    const Matcher<Node*>& value_matcher) {
-  return kPointerSize == 8 ? IsWord64Xor(value_matcher, c::IsInt64Constant(-1))
-                           : IsWord32Xor(value_matcher, c::IsInt32Constant(-1));
+Matcher<c::Node*>
+InterpreterAssemblerTest::InterpreterAssemblerForTest::IsWordNot(
+    const Matcher<c::Node*>& value_matcher) {
+  return kSystemPointerSize == 8
+             ? IsWord64Xor(value_matcher, c::IsInt64Constant(-1))
+             : IsWord32Xor(value_matcher, c::IsInt32Constant(-1));
 }
 
-Matcher<Node*>
+Matcher<c::Node*>
 InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedByteOperand(
     int offset, LoadSensitivity needs_poisoning) {
   return IsLoad(
@@ -87,7 +106,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedByteOperand(
       needs_poisoning);
 }
 
-Matcher<Node*>
+Matcher<c::Node*>
 InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedByteOperand(
     int offset, LoadSensitivity needs_poisoning) {
   return IsLoad(
@@ -99,7 +118,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedByteOperand(
       needs_poisoning);
 }
 
-Matcher<Node*>
+Matcher<c::Node*>
 InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedShortOperand(
     int offset, LoadSensitivity needs_poisoning) {
   if (TargetSupportsUnalignedAccess()) {
@@ -120,7 +139,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedShortOperand(
 #else
 #error "Unknown Architecture"
 #endif
-    Matcher<Node*> bytes[2];
+    Matcher<c::Node*> bytes[2];
     for (int i = 0; i < static_cast<int>(arraysize(bytes)); i++) {
       bytes[i] = IsLoad(
           MachineType::Uint8(),
@@ -135,7 +154,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedShortOperand(
   }
 }
 
-Matcher<Node*>
+Matcher<c::Node*>
 InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedShortOperand(
     int offset, LoadSensitivity needs_poisoning) {
   if (TargetSupportsUnalignedAccess()) {
@@ -156,7 +175,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedShortOperand(
 #else
 #error "Unknown Architecture"
 #endif
-    Matcher<Node*> bytes[2];
+    Matcher<c::Node*> bytes[2];
     for (int i = 0; i < static_cast<int>(arraysize(bytes)); i++) {
       bytes[i] = IsLoad(
           (i == 0) ? MachineType::Int8() : MachineType::Uint8(),
@@ -171,7 +190,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedShortOperand(
   }
 }
 
-Matcher<Node*>
+Matcher<c::Node*>
 InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedQuadOperand(
     int offset, LoadSensitivity needs_poisoning) {
   if (TargetSupportsUnalignedAccess()) {
@@ -192,7 +211,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedQuadOperand(
 #else
 #error "Unknown Architecture"
 #endif
-    Matcher<Node*> bytes[4];
+    Matcher<c::Node*> bytes[4];
     for (int i = 0; i < static_cast<int>(arraysize(bytes)); i++) {
       bytes[i] = IsLoad(
           MachineType::Uint8(),
@@ -212,7 +231,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedQuadOperand(
   }
 }
 
-Matcher<Node*>
+Matcher<c::Node*>
 InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedQuadOperand(
     int offset, LoadSensitivity needs_poisoning) {
   if (TargetSupportsUnalignedAccess()) {
@@ -233,7 +252,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedQuadOperand(
 #else
 #error "Unknown Architecture"
 #endif
-    Matcher<Node*> bytes[4];
+    Matcher<c::Node*> bytes[4];
     for (int i = 0; i < static_cast<int>(arraysize(bytes)); i++) {
       bytes[i] = IsLoad(
           (i == 0) ? MachineType::Int8() : MachineType::Uint8(),
@@ -253,7 +272,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedQuadOperand(
   }
 }
 
-Matcher<Node*>
+Matcher<c::Node*>
 InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedOperand(
     int offset, OperandSize operand_size, LoadSensitivity needs_poisoning) {
   switch (operand_size) {
@@ -269,7 +288,7 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsSignedOperand(
   return nullptr;
 }
 
-Matcher<Node*>
+Matcher<c::Node*>
 InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedOperand(
     int offset, OperandSize operand_size, LoadSensitivity needs_poisoning) {
   switch (operand_size) {
@@ -285,53 +304,15 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedOperand(
   return nullptr;
 }
 
-Matcher<compiler::Node*>
+Matcher<c::Node*>
 InterpreterAssemblerTest::InterpreterAssemblerForTest::IsLoadRegisterOperand(
     int offset, OperandSize operand_size) {
-  Matcher<compiler::Node*> reg_operand = IsChangeInt32ToIntPtr(
+  Matcher<c::Node*> reg_operand = IsChangeInt32ToIntPtr(
       IsSignedOperand(offset, operand_size, LoadSensitivity::kSafe));
-  return IsLoad(
-      MachineType::AnyTagged(), c::IsLoadParentFramePointer(),
-      c::IsWordShl(reg_operand, c::IsIntPtrConstant(kPointerSizeLog2)),
-      LoadSensitivity::kNeedsPoisoning);
-}
-
-TARGET_TEST_F(InterpreterAssemblerTest, Jump) {
-  // If debug code is enabled we emit extra code in Jump.
-  if (FLAG_debug_code) return;
-
-  int jump_offsets[] = {-9710, -77, 0, +3, +97109};
-  TRACED_FOREACH(int, jump_offset, jump_offsets) {
-    TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-      if (!interpreter::Bytecodes::IsJump(bytecode)) return;
-
-      InterpreterAssemblerTestState state(this, bytecode);
-      InterpreterAssemblerForTest m(&state, bytecode);
-      Node* tail_call_node = m.Jump(m.IntPtrConstant(jump_offset));
-
-      Matcher<Node*> next_bytecode_offset_matcher = c::IsIntPtrAdd(
-          c::IsParameter(InterpreterDispatchDescriptor::kBytecodeOffset),
-          c::IsIntPtrConstant(jump_offset));
-      Matcher<Node*> target_bytecode_matcher =
-          m.IsLoad(MachineType::Uint8(), _, next_bytecode_offset_matcher);
-      target_bytecode_matcher =
-          c::IsChangeUint32ToWord(target_bytecode_matcher);
-      Matcher<Node*> code_target_matcher = m.IsLoad(
-          MachineType::Pointer(),
-          c::IsParameter(InterpreterDispatchDescriptor::kDispatchTable),
-          c::IsWordShl(target_bytecode_matcher,
-                       c::IsIntPtrConstant(kPointerSizeLog2)));
-
-      EXPECT_THAT(
-          tail_call_node,
-          c::IsTailCall(
-              _, code_target_matcher,
-              c::IsParameter(InterpreterDispatchDescriptor::kAccumulator),
-              next_bytecode_offset_matcher, _,
-              c::IsParameter(InterpreterDispatchDescriptor::kDispatchTable), _,
-              _));
-    }
-  }
+  return IsBitcastWordToTagged(IsLoad(
+      MachineType::Pointer(), c::IsLoadParentFramePointer(),
+      c::IsWordShl(reg_operand, c::IsIntPtrConstant(kSystemPointerSizeLog2)),
+      LoadSensitivity::kCritical));
 }
 
 TARGET_TEST_F(InterpreterAssemblerTest, BytecodeOperand) {
@@ -354,45 +335,43 @@ TARGET_TEST_F(InterpreterAssemblerTest, BytecodeOperand) {
           case interpreter::OperandType::kRegCount:
             EXPECT_THAT(m.BytecodeOperandCount(i),
                         m.IsUnsignedOperand(offset, operand_size,
-                                            LoadSensitivity::kNeedsPoisoning));
+                                            LoadSensitivity::kCritical));
             break;
           case interpreter::OperandType::kFlag8:
             EXPECT_THAT(m.BytecodeOperandFlag(i),
                         m.IsUnsignedOperand(offset, operand_size,
-                                            LoadSensitivity::kNeedsPoisoning));
+                                            LoadSensitivity::kCritical));
             break;
           case interpreter::OperandType::kIdx:
-            EXPECT_THAT(
-                m.BytecodeOperandIdx(i),
-                c::IsChangeUint32ToWord(m.IsUnsignedOperand(
-                    offset, operand_size, LoadSensitivity::kNeedsPoisoning)));
+            EXPECT_THAT(m.BytecodeOperandIdx(i),
+                        c::IsChangeUint32ToWord(m.IsUnsignedOperand(
+                            offset, operand_size, LoadSensitivity::kCritical)));
             break;
           case interpreter::OperandType::kNativeContextIndex:
-            EXPECT_THAT(
-                m.BytecodeOperandNativeContextIndex(i),
-                c::IsChangeUint32ToWord(m.IsUnsignedOperand(
-                    offset, operand_size, LoadSensitivity::kNeedsPoisoning)));
+            EXPECT_THAT(m.BytecodeOperandNativeContextIndex(i),
+                        c::IsChangeUint32ToWord(m.IsUnsignedOperand(
+                            offset, operand_size, LoadSensitivity::kCritical)));
             break;
           case interpreter::OperandType::kUImm:
             EXPECT_THAT(m.BytecodeOperandUImm(i),
                         m.IsUnsignedOperand(offset, operand_size,
-                                            LoadSensitivity::kNeedsPoisoning));
+                                            LoadSensitivity::kCritical));
             break;
           case interpreter::OperandType::kImm: {
             EXPECT_THAT(m.BytecodeOperandImm(i),
                         m.IsSignedOperand(offset, operand_size,
-                                          LoadSensitivity::kNeedsPoisoning));
+                                          LoadSensitivity::kCritical));
             break;
           }
           case interpreter::OperandType::kRuntimeId:
             EXPECT_THAT(m.BytecodeOperandRuntimeId(i),
                         m.IsUnsignedOperand(offset, operand_size,
-                                            LoadSensitivity::kNeedsPoisoning));
+                                            LoadSensitivity::kCritical));
             break;
           case interpreter::OperandType::kIntrinsicId:
             EXPECT_THAT(m.BytecodeOperandIntrinsicId(i),
                         m.IsUnsignedOperand(offset, operand_size,
-                                            LoadSensitivity::kNeedsPoisoning));
+                                            LoadSensitivity::kCritical));
             break;
           case interpreter::OperandType::kRegList:
           case interpreter::OperandType::kReg:
@@ -406,7 +385,6 @@ TARGET_TEST_F(InterpreterAssemblerTest, BytecodeOperand) {
             break;
           case interpreter::OperandType::kNone:
             UNREACHABLE();
-            break;
         }
       }
     }
@@ -419,9 +397,10 @@ TARGET_TEST_F(InterpreterAssemblerTest, GetContext) {
     InterpreterAssemblerForTest m(&state, bytecode);
     EXPECT_THAT(
         m.GetContext(),
-        m.IsLoad(MachineType::AnyTagged(), c::IsLoadParentFramePointer(),
-                 c::IsIntPtrConstant(Register::current_context().ToOperand()
-                                     << kPointerSizeLog2)));
+        IsBitcastWordToTagged(m.IsLoad(
+            MachineType::Pointer(), c::IsLoadParentFramePointer(),
+            c::IsIntPtrConstant(Register::current_context().ToOperand() *
+                                kSystemPointerSize))));
   }
 }
 
@@ -430,9 +409,9 @@ TARGET_TEST_F(InterpreterAssemblerTest, LoadConstantPoolEntry) {
     InterpreterAssemblerTestState state(this, bytecode);
     InterpreterAssemblerForTest m(&state, bytecode);
     {
-      Node* index = m.IntPtrConstant(2);
-      Node* load_constant = m.LoadConstantPoolEntry(index);
-      Matcher<Node*> constant_pool_matcher = m.IsLoad(
+      TNode<IntPtrT> index = m.IntPtrConstant(2);
+      TNode<Object> load_constant = m.LoadConstantPoolEntry(index);
+      Matcher<c::Node*> constant_pool_matcher = m.IsLoadFromObject(
           MachineType::AnyTagged(),
           c::IsParameter(InterpreterDispatchDescriptor::kBytecodeArray),
           c::IsIntPtrConstant(BytecodeArray::kConstantPoolOffset -
@@ -442,12 +421,13 @@ TARGET_TEST_F(InterpreterAssemblerTest, LoadConstantPoolEntry) {
           m.IsLoad(MachineType::AnyTagged(), constant_pool_matcher,
                    c::IsIntPtrConstant(FixedArray::OffsetOfElementAt(2) -
                                        kHeapObjectTag),
-                   LoadSensitivity::kNeedsPoisoning));
+                   LoadSensitivity::kCritical));
     }
     {
-      Node* index = m.Parameter(2);
-      Node* load_constant = m.LoadConstantPoolEntry(index);
-      Matcher<Node*> constant_pool_matcher = m.IsLoad(
+      c::Node* index = m.UntypedParameter(2);
+      TNode<Object> load_constant =
+          m.LoadConstantPoolEntry(m.ReinterpretCast<IntPtrT>(index));
+      Matcher<c::Node*> constant_pool_matcher = m.IsLoadFromObject(
           MachineType::AnyTagged(),
           c::IsParameter(InterpreterDispatchDescriptor::kBytecodeArray),
           c::IsIntPtrConstant(BytecodeArray::kConstantPoolOffset -
@@ -458,8 +438,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, LoadConstantPoolEntry) {
               MachineType::AnyTagged(), constant_pool_matcher,
               c::IsIntPtrAdd(
                   c::IsIntPtrConstant(FixedArray::kHeaderSize - kHeapObjectTag),
-                  c::IsWordShl(index, c::IsIntPtrConstant(kPointerSizeLog2))),
-              LoadSensitivity::kNeedsPoisoning));
+                  c::IsWordShl(index, c::IsIntPtrConstant(kTaggedSizeLog2))),
+              LoadSensitivity::kCritical));
     }
   }
 }
@@ -468,12 +448,14 @@ TARGET_TEST_F(InterpreterAssemblerTest, LoadObjectField) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
     InterpreterAssemblerTestState state(this, bytecode);
     InterpreterAssemblerForTest m(&state, bytecode);
-    Node* object = m.IntPtrConstant(0xDEADBEEF);
+    TNode<HeapObject> object =
+        m.ReinterpretCast<HeapObject>(m.IntPtrConstant(0xDEADBEEF));
     int offset = 16;
-    Node* load_field = m.LoadObjectField(object, offset);
-    EXPECT_THAT(load_field,
-                m.IsLoad(MachineType::AnyTagged(), object,
-                         c::IsIntPtrConstant(offset - kHeapObjectTag)));
+    TNode<Object> load_field = m.LoadObjectField(object, offset);
+      EXPECT_THAT(
+          load_field,
+          m.IsLoadFromObject(MachineType::AnyTagged(), Eq(object),
+                             c::IsIntPtrConstant(offset - kHeapObjectTag)));
   }
 }
 
@@ -481,12 +463,14 @@ TARGET_TEST_F(InterpreterAssemblerTest, CallRuntime2) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
     InterpreterAssemblerTestState state(this, bytecode);
     InterpreterAssemblerForTest m(&state, bytecode);
-    Node* arg1 = m.Int32Constant(2);
-    Node* arg2 = m.Int32Constant(3);
-    Node* context = m.Int32Constant(4);
-    Node* call_runtime = m.CallRuntime(Runtime::kAdd, context, arg1, arg2);
-    EXPECT_THAT(call_runtime, c::IsCall(_, _, arg1, arg2, _,
-                                        c::IsInt32Constant(2), context, _, _));
+    TNode<Object> arg1 = m.ReinterpretCast<Object>(m.Int32Constant(2));
+    TNode<Object> arg2 = m.ReinterpretCast<Object>(m.Int32Constant(3));
+    TNode<Object> context = m.ReinterpretCast<Object>(m.Int32Constant(4));
+    TNode<Object> call_runtime =
+        m.CallRuntime(Runtime::kAdd, context, arg1, arg2);
+    EXPECT_THAT(call_runtime,
+                c::IsCall(_, _, Eq(arg1), Eq(arg2), _, c::IsInt32Constant(2),
+                          Eq(context), _, _));
   }
 }
 
@@ -500,29 +484,30 @@ TARGET_TEST_F(InterpreterAssemblerTest, CallRuntime) {
         Callable builtin =
             CodeFactory::InterpreterCEntry(isolate(), result_size);
 
-        Node* function_id = m.Int32Constant(0);
+        TNode<Uint32T> function_id = m.Uint32Constant(0);
         InterpreterAssembler::RegListNodePair registers(m.IntPtrConstant(1),
                                                         m.Int32Constant(2));
-        Node* context = m.IntPtrConstant(4);
+        TNode<Context> context = m.ReinterpretCast<Context>(m.Int32Constant(4));
 
-        Matcher<Node*> function_table = c::IsExternalConstant(
+        Matcher<c::Node*> function_table = c::IsExternalConstant(
             ExternalReference::runtime_function_table_address_for_unittests(
                 isolate()));
-        Matcher<Node*> function = c::IsIntPtrAdd(
-            function_table,
-            c::IsChangeUint32ToWord(c::IsInt32Mul(
-                function_id, c::IsInt32Constant(sizeof(Runtime::Function)))));
-        Matcher<Node*> function_entry =
+        Matcher<c::Node*> function =
+            c::IsIntPtrAdd(function_table,
+                           c::IsChangeUint32ToWord(c::IsInt32Mul(
+                               Eq(function_id),
+                               c::IsInt32Constant(sizeof(Runtime::Function)))));
+        Matcher<c::Node*> function_entry =
             m.IsLoad(MachineType::Pointer(), function,
                      c::IsIntPtrConstant(offsetof(Runtime::Function, entry)));
 
-        Node* call_runtime =
+        c::Node* call_runtime =
             m.CallRuntimeN(function_id, context, registers, result_size);
-        EXPECT_THAT(
-            call_runtime,
-            c::IsCall(_, c::IsHeapConstant(builtin.code()),
-                      registers.reg_count(), registers.base_reg_location(),
-                      function_entry, context, _, _));
+        EXPECT_THAT(call_runtime,
+                    c::IsCall(_, c::IsHeapConstant(builtin.code()),
+                              Eq(registers.reg_count()),
+                              Eq(registers.base_reg_location()), function_entry,
+                              Eq(context), _, _));
       }
     }
   }
@@ -532,19 +517,33 @@ TARGET_TEST_F(InterpreterAssemblerTest, LoadFeedbackVector) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
     InterpreterAssemblerTestState state(this, bytecode);
     InterpreterAssemblerForTest m(&state, bytecode);
-    Node* feedback_vector = m.LoadFeedbackVector();
+    TNode<HeapObject> feedback_vector = m.LoadFeedbackVector();
 
-    Matcher<Node*> load_function_matcher =
-        m.IsLoad(MachineType::AnyTagged(), c::IsLoadParentFramePointer(),
-                 c::IsIntPtrConstant(Register::function_closure().ToOperand()
-                                     << kPointerSizeLog2));
-    Matcher<Node*> load_vector_cell_matcher = m.IsLoad(
-        MachineType::AnyTagged(), load_function_matcher,
+    // Feedback vector is a phi node with two inputs. One of them is loading the
+    // feedback vector and the other is undefined constant (when feedback
+    // vectors aren't allocated). Find the input that loads feedback vector.
+    CHECK_EQ(static_cast<c::Node*>(feedback_vector)->opcode(),
+             i::compiler::IrOpcode::kPhi);
+    c::Node* value0 =
+        i::compiler::NodeProperties::GetValueInput(feedback_vector, 0);
+    c::Node* value1 =
+        i::compiler::NodeProperties::GetValueInput(feedback_vector, 1);
+    c::Node* load_feedback_vector = value0;
+    if (value0->opcode() == i::compiler::IrOpcode::kHeapConstant) {
+      load_feedback_vector = value1;
+    }
+
+    Matcher<c::Node*> load_function_matcher = IsBitcastWordToTagged(
+        m.IsLoad(MachineType::Pointer(), c::IsLoadParentFramePointer(),
+                 c::IsIntPtrConstant(Register::function_closure().ToOperand() *
+                                     kSystemPointerSize)));
+    Matcher<c::Node*> load_vector_cell_matcher = m.IsLoadFromObject(
+        MachineType::TaggedPointer(), load_function_matcher,
         c::IsIntPtrConstant(JSFunction::kFeedbackCellOffset - kHeapObjectTag));
-    EXPECT_THAT(
-        feedback_vector,
-        m.IsLoad(MachineType::AnyTagged(), load_vector_cell_matcher,
-                 c::IsIntPtrConstant(Cell::kValueOffset - kHeapObjectTag)));
+    EXPECT_THAT(load_feedback_vector,
+                m.IsLoadFromObject(
+                    MachineType::TaggedPointer(), load_vector_cell_matcher,
+                    c::IsIntPtrConstant(Cell::kValueOffset - kHeapObjectTag)));
   }
 }
 

@@ -25,20 +25,21 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
 #include "stream_base.h"
-
-#include "env.h"
 #include "handle_wrap.h"
-#include "string_bytes.h"
 #include "v8.h"
 
 namespace node {
+
+class Environment;
+class ExternalReferenceRegistry;
 
 class LibuvStreamWrap : public HandleWrap, public StreamBase {
  public:
   static void Initialize(v8::Local<v8::Object> target,
                          v8::Local<v8::Value> unused,
-                         v8::Local<v8::Context> context);
-
+                         v8::Local<v8::Context> context,
+                         void* priv);
+  static void RegisterExternalReferences(ExternalReferenceRegistry* registry);
   int GetFD() override;
   bool IsAlive() override;
   bool IsClosing() override;
@@ -76,7 +77,7 @@ class LibuvStreamWrap : public HandleWrap, public StreamBase {
   ShutdownWrap* CreateShutdownWrap(v8::Local<v8::Object> object) override;
   WriteWrap* CreateWriteWrap(v8::Local<v8::Object> object) override;
 
-  void Close(v8::Local<v8::Value> close_callback) override;
+  static LibuvStreamWrap* From(Environment* env, v8::Local<v8::Object> object);
 
  protected:
   LibuvStreamWrap(Environment* env,
@@ -86,9 +87,8 @@ class LibuvStreamWrap : public HandleWrap, public StreamBase {
 
   AsyncWrap* GetAsyncWrap() override;
 
-  static void AddMethods(Environment* env,
-                         v8::Local<v8::FunctionTemplate> target,
-                         int flags = StreamBase::kFlagNone);
+  static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env);
 
  protected:
   inline void set_fd(int fd) {

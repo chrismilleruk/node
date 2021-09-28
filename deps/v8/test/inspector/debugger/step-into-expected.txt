@@ -7,7 +7,7 @@ function testEval() {
   eval('// comment only\n');
 
 break at:
-// comment onl#y
+// comment only#
 
 break at:
   eval('// comment only');
@@ -15,8 +15,8 @@ break at:
 }
 
 break at:
-// comment only#
-
+// comment only
+#
 
 break at:
   eval('// comment only\n');
@@ -681,6 +681,31 @@ break at:
 function testGenerator() {
   var gen = #idMaker();
   return42();
+
+break at:
+
+function* idMaker#() {
+  yield 1;
+
+break at:
+  var gen = idMaker();
+  #return42();
+  gen.next().value;
+
+break at:
+function return42() {
+  #return 42;
+}
+
+break at:
+function return42() {
+  return 42;#
+}
+
+break at:
+  return42();
+  gen.#next().value;
+  debugger;
 
 break at:
 function* idMaker() {

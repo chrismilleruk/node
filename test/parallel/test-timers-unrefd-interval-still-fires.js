@@ -1,7 +1,5 @@
 'use strict';
-/*
- * This test is a regression test for joyent/node#8900.
- */
+// Regression test for https://github.com/nodejs/node-v0.x-archive/issues/8900.
 const common = require('../common');
 
 const TEST_DURATION = common.platformTimeout(1000);
@@ -16,7 +14,7 @@ const timer = setInterval(common.mustCall(() => {
   if (--N === 0) {
     clearInterval(timer);
     timer._onTimeout =
-      common.mustNotCall('Unrefd interal fired after being cleared');
+      common.mustNotCall('Unrefd interval fired after being cleared');
     clearTimeout(keepOpen);
   }
 }, N), 1);

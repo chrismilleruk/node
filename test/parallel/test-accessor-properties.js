@@ -1,6 +1,7 @@
+// Flags: --expose-internals
 'use strict';
 
-require('../common');
+const common = require('../common');
 
 // This tests that the accessor properties do not raise assertions
 // when called with incompatible receivers.
@@ -9,45 +10,46 @@ const assert = require('assert');
 
 // Objects that call StreamBase::AddMethods, when setting up
 // their prototype
-const TTY = process.binding('tty_wrap').TTY;
-const UDP = process.binding('udp_wrap').UDP;
+const { internalBinding } = require('internal/test/binding');
+const TTY = internalBinding('tty_wrap').TTY;
+const UDP = internalBinding('udp_wrap').UDP;
 
 {
   // Should throw instead of raise assertions
   assert.throws(() => {
-    TTY.prototype.bytesRead;
+    UDP.prototype.fd; // eslint-disable-line no-unused-expressions
   }, TypeError);
 
-  assert.throws(() => {
-    TTY.prototype.fd;
-  }, TypeError);
+  const StreamWrapProto = Object.getPrototypeOf(TTY.prototype);
+  const properties = ['bytesRead', 'fd', '_externalStream'];
 
-  assert.throws(() => {
-    TTY.prototype._externalStream;
-  }, TypeError);
+  properties.forEach((property) => {
+    // Should throw instead of raise assertions
+    assert.throws(() => {
+      TTY.prototype[property]; // eslint-disable-line no-unused-expressions
+    }, TypeError, `Missing expected TypeError for TTY.prototype.${property}`);
 
-  assert.throws(() => {
-    UDP.prototype.fd;
-  }, TypeError);
+    // Should not throw for Object.getOwnPropertyDescriptor
+    assert.strictEqual(
+      typeof Object.getOwnPropertyDescriptor(StreamWrapProto, property),
+      'object',
+      'typeof property descriptor ' + property + ' is not \'object\''
+    );
+  });
 
-  // Should not throw for Object.getOwnPropertyDescriptor
-  assert.strictEqual(
-    typeof Object.getOwnPropertyDescriptor(TTY.prototype, 'bytesRead'),
-    'object'
-  );
+  if (common.hasCrypto) { // eslint-disable-line node-core/crypto-check
+    // There are accessor properties in crypto too
+    const crypto = internalBinding('crypto');
 
-  assert.strictEqual(
-    typeof Object.getOwnPropertyDescriptor(TTY.prototype, 'fd'),
-    'object'
-  );
+    assert.throws(() => {
+      // eslint-disable-next-line no-unused-expressions
+      crypto.SecureContext.prototype._external;
+    }, TypeError);
 
-  assert.strictEqual(
-    typeof Object.getOwnPropertyDescriptor(TTY.prototype, '_externalStream'),
-    'object'
-  );
-
-  assert.strictEqual(
-    typeof Object.getOwnPropertyDescriptor(UDP.prototype, 'fd'),
-    'object'
-  );
+    assert.strictEqual(
+      typeof Object.getOwnPropertyDescriptor(
+        crypto.SecureContext.prototype, '_external'),
+      'object'
+    );
+  }
 }

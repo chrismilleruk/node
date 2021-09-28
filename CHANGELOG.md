@@ -1,189 +1,149 @@
 # Node.js Changelog
 
-<!--lint disable maximum-line-length-->
-
-To make the changelog easier to both use and manage, it has been split into
-multiple files organized according to significant major and minor Node.js
-release lines.
-
 Select a Node.js version below to view the changelog history:
 
-* [Node.js 10](doc/changelogs/CHANGELOG_V10.md)
-* [Node.js 9](doc/changelogs/CHANGELOG_V9.md)
-* [Node.js 8](doc/changelogs/CHANGELOG_V8.md)
-* [Node.js 7](doc/changelogs/CHANGELOG_V7.md)
-* [Node.js 6](doc/changelogs/CHANGELOG_V6.md)
-* [Node.js 5](doc/changelogs/CHANGELOG_V5.md)
-* [Node.js 4](doc/changelogs/CHANGELOG_V4.md)
-* [io.js](doc/changelogs/CHANGELOG_IOJS.md)
-* [Node.js 0.12](doc/changelogs/CHANGELOG_V012.md)
-* [Node.js 0.10](doc/changelogs/CHANGELOG_V010.md)
+* [Node.js 16](doc/changelogs/CHANGELOG_V16.md) **Current**
+* [Node.js 15](doc/changelogs/CHANGELOG_V15.md) End-of-Life
+* [Node.js 14](doc/changelogs/CHANGELOG_V14.md) **Long Term Support**
+* [Node.js 13](doc/changelogs/CHANGELOG_V13.md) End-of-Life
+* [Node.js 12](doc/changelogs/CHANGELOG_V12.md) Long Term Support
+* [Node.js 11](doc/changelogs/CHANGELOG_V11.md) End-of-Life
+* [Node.js 10](doc/changelogs/CHANGELOG_V10.md) End-of-Life
+* [Node.js 9](doc/changelogs/CHANGELOG_V9.md) End-of-Life
+* [Node.js 8](doc/changelogs/CHANGELOG_V8.md) End-of-Life
+* [Node.js 7](doc/changelogs/CHANGELOG_V7.md) End-of-Life
+* [Node.js 6](doc/changelogs/CHANGELOG_V6.md) End-of-Life
+* [Node.js 5](doc/changelogs/CHANGELOG_V5.md) End-of-Life
+* [Node.js 4](doc/changelogs/CHANGELOG_V4.md) End-of-Life
+* [io.js](doc/changelogs/CHANGELOG_IOJS.md) End-of-Life
+* [Node.js 0.12](doc/changelogs/CHANGELOG_V012.md) End-of-Life
+* [Node.js 0.10](doc/changelogs/CHANGELOG_V010.md) End-of-Life
 * [Archive](doc/changelogs/CHANGELOG_ARCHIVE.md)
 
 Please use the following table to find the changelog for a specific Node.js
 release.
 
+<!--lint disable maximum-line-length-->
+
 <table>
 <tr>
-  <th title="Current"><a href="doc/changelogs/CHANGELOG_V10.md">10</a><sup>Current</sup></th>
-  <th><a href="doc/changelogs/CHANGELOG_V9.md">9</a></th>
-  <th title="LTS Until 2019-12"><a href="doc/changelogs/CHANGELOG_V8.md">8</a><sup>LTS</sup></th>
-  <th title="LTS Until 2019-04"><a href="doc/changelogs/CHANGELOG_V6.md">6</a><sup>LTS</sup></th>
-  <th title="End-of-life since 2018-05-01"><a href="doc/changelogs/CHANGELOG_V4.md">4</a><sup>EOL</sup></th>
+  <th title="Current"><a href="doc/changelogs/CHANGELOG_V16.md">16</a><sup>Current</sup></th>
+  <th title="LTS Until 2023-04"><a href="doc/changelogs/CHANGELOG_V14.md">14</a><sup>LTS</sup></th>
+  <th title="LTS Until 2022-04"><a href="doc/changelogs/CHANGELOG_V12.md">12</a><sup>LTS</sup></th>
 </tr>
 <tr>
     <td valign="top">
-<b><a href="doc/changelogs/CHANGELOG_V10.md#10.5.0">10.5.0</a></b><br/>
-<a href="doc/changelogs/CHANGELOG_V10.md#10.4.1">10.4.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V10.md#10.4.0">10.4.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V10.md#10.3.0">10.3.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V10.md#10.2.1">10.2.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V10.md#10.2.0">10.2.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V10.md#10.1.0">10.1.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V10.md#10.0.0">10.0.0</a><br/>
+<b><a href="doc/changelogs/CHANGELOG_V16.md#16.10.0">16.10.0</a></b><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.9.1">16.9.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.9.0">16.9.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.8.0">16.8.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.7.0">16.7.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.6.2">16.6.2</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.6.1">16.6.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.6.0">16.6.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.5.0">16.5.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.4.2">16.4.2</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.4.1">16.4.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.4.0">16.4.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.3.0">16.3.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.2.0">16.2.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.1.0">16.1.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V16.md#16.0.0">16.0.0</a><br/>
     </td>
     <td valign="top">
-<b><a href="doc/changelogs/CHANGELOG_V9.md#9.11.2">9.11.2</a></b><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.11.1">9.11.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.11.0">9.11.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.10.1">9.10.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.10.0">9.10.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.9.0">9.9.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.8.0">9.8.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.7.1">9.7.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.7.0">9.7.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.6.1">9.6.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.6.0">9.6.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.5.0">9.5.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.4.0">9.4.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.3.0">9.3.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.2.1">9.2.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.2.0">9.2.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.1.0">9.1.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V9.md#9.0.0">9.0.0</a><br/>
+<b><a href="doc/changelogs/CHANGELOG_V14.md#14.18.0">14.18.0</a></b><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.17.6">14.17.6</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.17.5">14.17.5</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.17.4">14.17.4</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.17.3">14.17.3</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.17.2">14.17.2</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.17.1">14.17.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.17.0">14.17.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.16.1">14.16.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.16.0">14.16.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.15.5">14.15.5</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.15.4">14.15.4</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.15.3">14.15.3</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.15.2">14.15.2</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.15.1">14.15.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.15.0">14.15.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.14.0">14.14.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.13.1">14.13.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.13.0">14.13.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.12.0">14.12.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.11.0">14.11.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.10.1">14.10.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.10.0">14.10.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.9.0">14.9.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.8.0">14.8.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.7.0">14.7.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.6.0">14.6.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.5.0">14.5.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.4.0">14.4.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.3.0">14.3.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.2.0">14.2.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.1.0">14.1.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V14.md#14.0.0">14.0.0</a><br/>
     </td>
     <td valign="top">
-<b><a href="doc/changelogs/CHANGELOG_V8.md#8.11.3">8.11.3</a></b><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.11.2">8.11.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.11.1">8.11.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.11.0">8.11.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.10.0">8.10.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.9.4">8.9.4</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.9.3">8.9.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.9.2">8.9.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.9.1">8.9.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.9.0">8.9.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.8.1">8.8.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.8.0">8.8.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.7.0">8.7.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.6.0">8.6.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.5.0">8.5.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.4.0">8.4.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.3.0">8.3.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.2.1">8.2.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.2.0">8.2.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.1.4">8.1.4</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.1.3">8.1.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.1.2">8.1.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.1.1">8.1.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.1.0">8.1.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V8.md#8.0.0">8.0.0</a><br/>
+<b><a href="doc/changelogs/CHANGELOG_V12.md#12.22.6">12.22.6</a></b><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.22.5">12.22.5</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.22.4">12.22.4</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.22.3">12.22.3</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.22.2">12.22.2</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.22.1">12.22.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.22.0">12.22.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.21.0">12.21.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.20.2">12.20.2</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.20.1">12.20.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.20.0">12.20.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.19.1">12.19.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.19.0">12.19.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.18.4">12.18.4</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.18.3">12.18.3</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.18.2">12.18.2</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.18.1">12.18.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.18.0">12.18.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.17.0">12.17.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.16.3">12.16.3</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.16.2">12.16.2</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.16.1">12.16.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.16.0">12.16.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.15.0">12.15.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.14.1">12.14.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.14.0">12.14.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.13.1">12.13.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.13.0">12.13.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.12.0">12.12.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.11.1">12.11.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.11.0">12.11.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.10.0">12.10.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.9.1">12.9.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.9.0">12.9.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.8.1">12.8.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.8.0">12.8.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.7.0">12.7.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.6.0">12.6.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.5.0">12.5.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.4.0">12.4.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.3.1">12.3.1</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.3.0">12.3.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.2.0">12.2.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.1.0">12.1.0</a><br/>
+<a href="doc/changelogs/CHANGELOG_V12.md#12.0.0">12.0.0</a><br/>
     </td>
-  <td valign="top">
-<b><a href="doc/changelogs/CHANGELOG_V6.md#6.14.3">6.14.3</a></b><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.14.2">6.14.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.14.1">6.14.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.14.0">6.14.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.13.1">6.13.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.13.0">6.13.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.12.3">6.12.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.12.2">6.12.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.12.1">6.12.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.12.0">6.12.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.11.5">6.11.5</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.11.4">6.11.4</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.11.3">6.11.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.11.2">6.11.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.11.1">6.11.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.11.0">6.11.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.10.3">6.10.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.10.2">6.10.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.10.1">6.10.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.10.0">6.10.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.9.5">6.9.5</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.9.4">6.9.4</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.9.3">6.9.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.9.2">6.9.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.9.1">6.9.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.9.0">6.9.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.8.1">6.8.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.8.0">6.8.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.7.0">6.7.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.6.0">6.6.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.5.0">6.5.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.4.0">6.4.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.3.1">6.3.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.3.0">6.3.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.2.2">6.2.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.2.1">6.2.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.2.0">6.2.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.1.0">6.1.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V6.md#6.0.0">6.0.0</a><br/>
-  </td>
-  <td valign="top">
-<b><a href="doc/changelogs/CHANGELOG_V4.md#4.9.1">4.9.1</a></b><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.9.0">4.9.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.8.7">4.8.7</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.8.6">4.8.6</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.8.5">4.8.5</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.8.4">4.8.4</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.8.3">4.8.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.8.2">4.8.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.8.1">4.8.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.8.0">4.8.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.7.3">4.7.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.7.2">4.7.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.7.1">4.7.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.7.0">4.7.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.6.1">4.6.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.6.1">4.6.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.6.0">4.6.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.5.0">4.5.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.4.7">4.4.7</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.4.6">4.4.6</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.4.5">4.4.5</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.4.4">4.4.4</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.4.3">4.4.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.4.2">4.4.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.4.1">4.4.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.4.0">4.4.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.3.2">4.3.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.3.1">4.3.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.3.0">4.3.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.2.6">4.2.6</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.2.5">4.2.5</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.2.4">4.2.4</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.2.3">4.2.3</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.2.2">4.2.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.2.1">4.2.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.2.0">4.2.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.1.2">4.1.2</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.1.1">4.1.1</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.1.0">4.1.0</a><br/>
-<a href="doc/changelogs/CHANGELOG_V4.md#4.0.0">4.0.0</a><br/>
-  </td>
 </tr>
 </table>
 
-### Notes
+## Notes
 
-* Release streams marked with `LTS` are currently covered by the
-  [Node.js Long Term Support plan](https://github.com/nodejs/LTS).
-* Release versions displayed in **bold** text represent the most
-  recent actively supported release.
+* The [Node.js Long Term Support plan](https://github.com/nodejs/Release) covers
+  LTS releases.
+* Release versions in **bold** text are the most recent supported releases.
 
-----
-----
+***
+
+***
 
 ## 2016-05-06, Version 0.12.14 (Maintenance), @rvagg
 
@@ -383,7 +343,7 @@ release.
 
 ## 2015-09-08, Version 4.0.0 (Stable), @rvagg
 
-<a href="doc/changelogs/CHANGELOG_V4.md#4.0.0>Moved to doc/changelogs/CHANGELOG_V6.md#6.0.0</a>.
+<a href="doc/changelogs/CHANGELOG_V4.md#4.0.0">Moved to doc/changelogs/CHANGELOG_V6.md#6.0.0</a>.
 
 ## 2015-09-02, Version 3.3.0, @rvagg
 
@@ -1399,7 +1359,7 @@ release.
 
 ## 2009.08.21, Version 0.1.5
 
-<a href="doc/changelogs/CHANGELOG_ARCHIVE.md#0.1.5>Moved to doc/changelogs/CHANGELOG_V6.md#6.0.0</a>.
+<a href="doc/changelogs/CHANGELOG_ARCHIVE.md#0.1.5">Moved to doc/changelogs/CHANGELOG_V6.md#6.0.0</a>.
 
 ## 2009.08.13, Version 0.1.4
 

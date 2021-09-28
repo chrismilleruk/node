@@ -1,6 +1,9 @@
+// Flags: --expose-internals
+
 'use strict';
 
 const common = require('../common');
+const { internalBinding } = require('internal/test/binding');
 const assert = require('assert');
 const v8 = require('v8');
 const os = require('os');
@@ -13,19 +16,15 @@ const objects = [
   { bar: 'baz' },
   new Uint8Array([1, 2, 3, 4]),
   new Uint32Array([1, 2, 3, 4]),
+  new DataView(new ArrayBuffer(42)),
   Buffer.from([1, 2, 3, 4]),
   undefined,
   null,
   42,
-  circular
+  circular,
 ];
 
-const hostObject = new (process.binding('js_stream').JSStream)();
-
-const serializerTypeError =
-  /^TypeError: Class constructor Serializer cannot be invoked without 'new'$/;
-const deserializerTypeError =
-  /^TypeError: Class constructor Deserializer cannot be invoked without 'new'$/;
+const hostObject = new (internalBinding('js_stream').JSStream)();
 
 {
   const ser = new v8.DefaultSerializer();
@@ -51,7 +50,7 @@ const deserializerTypeError =
 {
   const ser = new v8.DefaultSerializer();
   ser._getDataCloneError = common.mustCall((message) => {
-    assert.strictEqual(message, '[object Object] could not be cloned.');
+    assert.strictEqual(message, '#<Object> could not be cloned.');
     return new Error('foobar');
   });
 
@@ -95,6 +94,47 @@ const deserializerTypeError =
   assert.strictEqual(des.readValue().val, hostObject);
 }
 
+// This test ensures that `v8.Serializer.writeRawBytes()` support
+// `TypedArray` and `DataView`.
+{
+  const text = 'hostObjectTag';
+  const data = Buffer.from(text);
+  const arrayBufferViews = common.getArrayBufferViews(data);
+
+  // `buf` is one of `TypedArray` or `DataView`.
+  function testWriteRawBytes(buf) {
+    let writeHostObjectCalled = false;
+    const ser = new v8.DefaultSerializer();
+
+    ser._writeHostObject = common.mustCall((object) => {
+      writeHostObjectCalled = true;
+      ser.writeUint32(buf.byteLength);
+      ser.writeRawBytes(buf);
+    });
+
+    ser.writeHeader();
+    ser.writeValue({ val: hostObject });
+
+    const des = new v8.DefaultDeserializer(ser.releaseBuffer());
+    des._readHostObject = common.mustCall(() => {
+      assert.strictEqual(writeHostObjectCalled, true);
+      const length = des.readUint32();
+      const buf = des.readRawBytes(length);
+      assert.strictEqual(buf.toString(), text);
+
+      return hostObject;
+    });
+
+    des.readHeader();
+
+    assert.strictEqual(des.readValue().val, hostObject);
+  }
+
+  arrayBufferViews.forEach((buf) => {
+    testWriteRawBytes(buf);
+  });
+}
+
 {
   const ser = new v8.DefaultSerializer();
   ser._writeHostObject = common.mustCall((object) => {
@@ -108,8 +148,10 @@ const deserializerTypeError =
 }
 
 {
-  assert.throws(() => v8.serialize(hostObject),
-                /^Error: Unknown host object type: \[object .*\]$/);
+  assert.throws(() => v8.serialize(hostObject), {
+    constructor: Error,
+    message: 'Unserializable host object: JSStream {}'
+  });
 }
 
 {
@@ -140,6 +182,64 @@ const deserializerTypeError =
 }
 
 {
-  assert.throws(v8.Serializer, serializerTypeError);
-  assert.throws(v8.Deserializer, deserializerTypeError);
+  assert.throws(() => v8.Serializer(), {
+    constructor: TypeError,
+    message: "Class constructor Serializer cannot be invoked without 'new'",
+    code: 'ERR_CONSTRUCT_CALL_REQUIRED'
+  });
+  assert.throws(() => v8.Deserializer(), {
+    constructor: TypeError,
+    message: "Class constructor Deserializer cannot be invoked without 'new'",
+    code: 'ERR_CONSTRUCT_CALL_REQUIRED'
+  });
+}
+
+
+// `v8.deserialize()` and `new v8.Deserializer()` should support both
+// `TypedArray` and `DataView`.
+{
+  for (const obj of objects) {
+    const buf = v8.serialize(obj);
+
+    for (const arrayBufferView of common.getArrayBufferViews(buf)) {
+      assert.deepStrictEqual(v8.deserialize(arrayBufferView), obj);
+    }
+
+    for (const arrayBufferView of common.getArrayBufferViews(buf)) {
+      const deserializer = new v8.DefaultDeserializer(arrayBufferView);
+      deserializer.readHeader();
+      const value = deserializer.readValue();
+      assert.deepStrictEqual(value, obj);
+
+      const serializer = new v8.DefaultSerializer();
+      serializer.writeHeader();
+      serializer.writeValue(value);
+      assert.deepStrictEqual(buf, serializer.releaseBuffer());
+    }
+  }
+}
+
+{
+  const INVALID_SOURCE = 'INVALID_SOURCE_TYPE';
+  const serializer = new v8.Serializer();
+  serializer.writeHeader();
+  assert.throws(
+    () => serializer.writeRawBytes(INVALID_SOURCE),
+    /^TypeError: source must be a TypedArray or a DataView$/,
+  );
+  assert.throws(
+    () => v8.deserialize(INVALID_SOURCE),
+    /^TypeError: buffer must be a TypedArray or a DataView$/,
+  );
+  assert.throws(
+    () => new v8.Deserializer(INVALID_SOURCE),
+    /^TypeError: buffer must be a TypedArray or a DataView$/,
+  );
+}
+
+{
+  // Regression test for https://github.com/nodejs/node/issues/37978
+  assert.throws(() => {
+    new v8.Deserializer(new v8.Serializer().releaseBuffer()).readDouble();
+  }, /ReadDouble\(\) failed/);
 }

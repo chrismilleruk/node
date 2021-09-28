@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "test/unittests/compiler/instruction-selector-unittest.h"
+#include "test/unittests/compiler/backend/instruction-selector-unittest.h"
 
-#include "src/objects-inl.h"
+#include "src/objects/objects-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -195,10 +195,8 @@ static const MemoryAccess kMemoryAccesses[] = {
 
 }  // namespace
 
-
-typedef InstructionSelectorTestWithParam<MemoryAccess>
-    InstructionSelectorMemoryAccessTest;
-
+using InstructionSelectorMemoryAccessTest =
+    InstructionSelectorTestWithParam<MemoryAccess>;
 
 TEST_P(InstructionSelectorMemoryAccessTest, LoadWithParameters) {
   const MemoryAccess memacc = GetParam();
@@ -313,11 +311,9 @@ TEST_P(InstructionSelectorMemoryAccessTest, StoreWithImmediateIndex) {
   }
 }
 
-
-INSTANTIATE_TEST_CASE_P(InstructionSelectorTest,
-                        InstructionSelectorMemoryAccessTest,
-                        ::testing::ValuesIn(kMemoryAccesses));
-
+INSTANTIATE_TEST_SUITE_P(InstructionSelectorTest,
+                         InstructionSelectorMemoryAccessTest,
+                         ::testing::ValuesIn(kMemoryAccesses));
 
 // -----------------------------------------------------------------------------
 // AddressingMode for loads and stores.
@@ -510,9 +506,7 @@ const MultParam kMultParams[] = {{-1, false, kMode_None},
 
 }  // namespace
 
-
-typedef InstructionSelectorTestWithParam<MultParam> InstructionSelectorMultTest;
-
+using InstructionSelectorMultTest = InstructionSelectorTestWithParam<MultParam>;
 
 static unsigned InputCountForLea(AddressingMode mode) {
   switch (mode) {
@@ -622,10 +616,8 @@ TEST_P(InstructionSelectorMultTest, MultAdd32) {
   }
 }
 
-
-INSTANTIATE_TEST_CASE_P(InstructionSelectorTest, InstructionSelectorMultTest,
-                        ::testing::ValuesIn(kMultParams));
-
+INSTANTIATE_TEST_SUITE_P(InstructionSelectorTest, InstructionSelectorMultTest,
+                         ::testing::ValuesIn(kMultParams));
 
 TEST_F(InstructionSelectorTest, Int32MulHigh) {
   StreamBuilder m(this, MachineType::Int32(), MachineType::Int32(),
@@ -658,6 +650,21 @@ TEST_F(InstructionSelectorTest, LoadAnd32) {
   Node* const p1 = m.Parameter(1);
   m.Return(
       m.Word32And(p0, m.Load(MachineType::Int32(), p1, m.Int32Constant(127))));
+  Stream s = m.Build();
+  ASSERT_EQ(1U, s.size());
+  EXPECT_EQ(kIA32And, s[0]->arch_opcode());
+  ASSERT_EQ(3U, s[0]->InputCount());
+  EXPECT_EQ(s.ToVreg(p0), s.ToVreg(s[0]->InputAt(0)));
+  EXPECT_EQ(s.ToVreg(p1), s.ToVreg(s[0]->InputAt(1)));
+}
+
+TEST_F(InstructionSelectorTest, LoadImmutableAnd32) {
+  StreamBuilder m(this, MachineType::Int32(), MachineType::Int32(),
+                  MachineType::Int32());
+  Node* const p0 = m.Parameter(0);
+  Node* const p1 = m.Parameter(1);
+  m.Return(m.Word32And(
+      p0, m.LoadImmutable(MachineType::Int32(), p1, m.Int32Constant(127))));
   Stream s = m.Build();
   ASSERT_EQ(1U, s.size());
   EXPECT_EQ(kIA32And, s[0]->arch_opcode());
@@ -844,14 +851,99 @@ TEST_F(InstructionSelectorTest, Word32Clz) {
   EXPECT_EQ(s.ToVreg(n), s.ToVreg(s[0]->Output()));
 }
 
-TEST_F(InstructionSelectorTest, SpeculationFence) {
-  StreamBuilder m(this, MachineType::Int32());
-  m.SpeculationFence();
-  m.Return(m.Int32Constant(0));
-  Stream s = m.Build();
-  ASSERT_EQ(1U, s.size());
-  EXPECT_EQ(kLFence, s[0]->arch_opcode());
+// SIMD.
+
+TEST_F(InstructionSelectorTest, SIMDSplatZero) {
+  // Test optimization for splat of contant 0.
+  // {i8x16,i16x8,i32x4,i64x2}.splat(const(0)) -> v128.zero().
+  // Optimizations for f32x4.splat and f64x2.splat not implemented since it
+  // doesn't improve the codegen as much (same number of instructions).
+  {
+    StreamBuilder m(this, MachineType::Simd128());
+    Node* const splat =
+        m.I64x2SplatI32Pair(m.Int32Constant(0), m.Int32Constant(0));
+    m.Return(splat);
+    Stream s = m.Build();
+    ASSERT_EQ(1U, s.size());
+    EXPECT_EQ(kIA32S128Zero, s[0]->arch_opcode());
+    ASSERT_EQ(0U, s[0]->InputCount());
+    EXPECT_EQ(1U, s[0]->OutputCount());
+  }
+  {
+    StreamBuilder m(this, MachineType::Simd128());
+    Node* const splat = m.I32x4Splat(m.Int32Constant(0));
+    m.Return(splat);
+    Stream s = m.Build();
+    ASSERT_EQ(1U, s.size());
+    EXPECT_EQ(kIA32S128Zero, s[0]->arch_opcode());
+    ASSERT_EQ(0U, s[0]->InputCount());
+    EXPECT_EQ(1U, s[0]->OutputCount());
+  }
+  {
+    StreamBuilder m(this, MachineType::Simd128());
+    Node* const splat = m.I16x8Splat(m.Int32Constant(0));
+    m.Return(splat);
+    Stream s = m.Build();
+    ASSERT_EQ(1U, s.size());
+    EXPECT_EQ(kIA32S128Zero, s[0]->arch_opcode());
+    ASSERT_EQ(0U, s[0]->InputCount());
+    EXPECT_EQ(1U, s[0]->OutputCount());
+  }
+  {
+    StreamBuilder m(this, MachineType::Simd128());
+    Node* const splat = m.I8x16Splat(m.Int32Constant(0));
+    m.Return(splat);
+    Stream s = m.Build();
+    ASSERT_EQ(1U, s.size());
+    EXPECT_EQ(kIA32S128Zero, s[0]->arch_opcode());
+    ASSERT_EQ(0U, s[0]->InputCount());
+    EXPECT_EQ(1U, s[0]->OutputCount());
+  }
 }
+
+struct SwizzleConstants {
+  uint8_t shuffle[kSimd128Size];
+  bool omit_add;
+};
+
+static constexpr SwizzleConstants kSwizzleConstants[] = {
+    {
+        // all lanes < kSimd128Size
+        {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+        true,
+    },
+    {
+        // lanes that are >= kSimd128Size have top bit set
+        {12, 13, 14, 15, 0x90, 0x91, 0x92, 0x93, 0xA0, 0xA1, 0xA2, 0xA3, 0xFC,
+         0xFD, 0xFE, 0xFF},
+        true,
+    },
+    {
+        {12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27},
+        false,
+    },
+};
+
+using InstructionSelectorSIMDSwizzleConstantTest =
+    InstructionSelectorTestWithParam<SwizzleConstants>;
+
+TEST_P(InstructionSelectorSIMDSwizzleConstantTest, SimdSwizzleConstant) {
+  // Test optimization of swizzle with constant indices.
+  auto param = GetParam();
+  StreamBuilder m(this, MachineType::Simd128(), MachineType::Simd128());
+  Node* const c = m.S128Const(param.shuffle);
+  Node* swizzle = m.AddNode(m.machine()->I8x16Swizzle(), m.Parameter(0), c);
+  m.Return(swizzle);
+  Stream s = m.Build();
+  ASSERT_EQ(2U, s.size());
+  ASSERT_EQ(kIA32I8x16Swizzle, s[1]->arch_opcode());
+  ASSERT_EQ(param.omit_add, s[1]->misc());
+  ASSERT_EQ(1U, s[0]->OutputCount());
+}
+
+INSTANTIATE_TEST_SUITE_P(InstructionSelectorTest,
+                         InstructionSelectorSIMDSwizzleConstantTest,
+                         ::testing::ValuesIn(kSwizzleConstants));
 
 }  // namespace compiler
 }  // namespace internal

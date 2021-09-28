@@ -34,9 +34,7 @@ let gotThanks = false;
 let tcpLengthSeen = 0;
 
 
-/*
- * 5MB of random buffer.
- */
+// 5MB of random buffer.
 const buffer = Buffer.allocUnsafe(bufferSize);
 for (let i = 0; i < buffer.length; i++) {
   buffer[i] = parseInt(Math.random() * 10000) % 256;
@@ -75,7 +73,7 @@ const tcp = net.Server(common.mustCall((s) => {
   s.on('data', (d) => {
     tcpLengthSeen += d.length;
     for (let j = 0; j < d.length; j++) {
-      assert.strictEqual(buffer[i], d[j]);
+      assert.strictEqual(d[j], buffer[i]);
       i++;
     }
   });
@@ -103,7 +101,7 @@ function startClient() {
   }, common.mustCall((res) => {
     res.setEncoding('utf8');
     res.on('data', common.mustCall((string) => {
-      assert.strictEqual('thanks', string);
+      assert.strictEqual(string, 'thanks');
       gotThanks = true;
     }));
   }));
@@ -113,5 +111,5 @@ function startClient() {
 
 process.on('exit', () => {
   assert.ok(gotThanks);
-  assert.strictEqual(bufferSize, tcpLengthSeen);
+  assert.strictEqual(tcpLengthSeen, bufferSize);
 });

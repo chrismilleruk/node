@@ -2,20 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-let typedArrayIntConstructors = [
-  {name: "Uint8", ctor: Uint8Array},
-  {name: "Int8", ctor: Int8Array},
-  {name: "Uint16", ctor: Uint16Array},
-  {name: "Int16", ctor: Int16Array},
-  {name: "Uint32", ctor: Uint32Array},
-  {name: "Int32", ctor: Int32Array},
-  {name: "Uint8Clamped", ctor: Uint8ClampedArray},
-];
-
-let typedArrayFloatConstructors = [
-  {name: "Float32", ctor: Float32Array},
-  {name: "Float64", ctor: Float64Array},
-];
+d8.file.execute('base.js');
 
 function CreateBenchmarks(constructors, comparefns = []) {
   var benchmarks = [];
@@ -27,17 +14,22 @@ function CreateBenchmarks(constructors, comparefns = []) {
   return benchmarks;
 }
 
-const size = 3000;
-const initialLargeArray = new Array(size);
-for (let i = 0; i < size; ++i) {
-  initialLargeArray[i] = Math.random() * 3000;
+const kArraySize = 3000;
+const initialLargeArray = new Array(kArraySize);
+for (let i = 0; i < kArraySize; ++i) {
+  initialLargeArray[i] = Math.random() * kArraySize;
 }
 
 let array_to_sort = [];
 
 function CreateSetupFn(constructor) {
   return () => {
-    array_to_sort = new constructor(initialLargeArray);
+    if (constructor == BigUint64Array || constructor == BigInt64Array) {
+      array_to_sort = constructor.from(initialLargeArray,
+                                       x => BigInt(Math.floor(x)));
+    } else {
+      array_to_sort = new constructor(initialLargeArray);
+    }
   }
 }
 

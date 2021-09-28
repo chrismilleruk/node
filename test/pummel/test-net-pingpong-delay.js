@@ -24,7 +24,7 @@ const common = require('../common');
 const assert = require('assert');
 const net = require('net');
 
-function pingPongTest(port, host, on_complete) {
+function pingPongTest(host, on_complete) {
   const N = 100;
   const DELAY = 1;
   let count = 0;
@@ -35,11 +35,11 @@ function pingPongTest(port, host, on_complete) {
 
     socket.on('data', function(data) {
       console.log(data);
-      assert.strictEqual('PING', data);
-      assert.strictEqual('open', socket.readyState);
-      assert.strictEqual(true, count <= N);
+      assert.strictEqual(data, 'PING');
+      assert.strictEqual(socket.readyState, 'open');
+      assert.strictEqual(count <= N, true);
       setTimeout(function() {
-        assert.strictEqual('open', socket.readyState);
+        assert.strictEqual(socket.readyState, 'open');
         socket.write('PONG');
       }, DELAY);
     });
@@ -51,35 +51,35 @@ function pingPongTest(port, host, on_complete) {
 
     socket.on('end', function() {
       console.log('server-side socket EOF');
-      assert.strictEqual('writeOnly', socket.readyState);
+      assert.strictEqual(socket.readyState, 'writeOnly');
       socket.end();
     });
 
     socket.on('close', function(had_error) {
       console.log('server-side socket.end');
-      assert.strictEqual(false, had_error);
-      assert.strictEqual('closed', socket.readyState);
+      assert.strictEqual(had_error, false);
+      assert.strictEqual(socket.readyState, 'closed');
       socket.server.close();
     });
   });
 
-  server.listen(port, host, common.mustCall(function() {
-    const client = net.createConnection(port, host);
+  server.listen(0, host, common.mustCall(function() {
+    const client = net.createConnection(server.address().port, host);
 
     client.setEncoding('utf8');
 
     client.on('connect', function() {
-      assert.strictEqual('open', client.readyState);
+      assert.strictEqual(client.readyState, 'open');
       client.write('PING');
     });
 
     client.on('data', function(data) {
       console.log(data);
-      assert.strictEqual('PONG', data);
-      assert.strictEqual('open', client.readyState);
+      assert.strictEqual(data, 'PONG');
+      assert.strictEqual(client.readyState, 'open');
 
       setTimeout(function() {
-        assert.strictEqual('open', client.readyState);
+        assert.strictEqual(client.readyState, 'open');
         if (count++ < N) {
           client.write('PING');
         } else {
@@ -97,11 +97,11 @@ function pingPongTest(port, host, on_complete) {
 
     client.on('close', common.mustCall(function() {
       console.log('client.end');
-      assert.strictEqual(N + 1, count);
+      assert.strictEqual(count, N + 1);
       assert.ok(client_ended);
       if (on_complete) on_complete();
     }));
   }));
 }
 
-pingPongTest(common.PORT);
+pingPongTest();

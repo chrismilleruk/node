@@ -1,3 +1,4 @@
+// Flags: --expose-internals
 'use strict';
 
 const common = require('../common');
@@ -11,30 +12,24 @@ let stdOut;
 
 
 function startPrintHelpTest() {
-  exec(`${process.execPath} --help`, common.mustCall((err, stdout, stderr) => {
-    assert.ifError(err);
+  exec(`${process.execPath} --help`, common.mustSucceed((stdout, stderr) => {
     stdOut = stdout;
     validateNodePrintHelp();
   }));
 }
 
 function validateNodePrintHelp() {
-  const config = process.config;
   const HAVE_OPENSSL = common.hasCrypto;
-  const NODE_FIPS_MODE = common.hasFipsCrypto;
   const NODE_HAVE_I18N_SUPPORT = common.hasIntl;
-  const HAVE_INSPECTOR = config.variables.v8_enable_inspector === 1;
+  const HAVE_INSPECTOR = process.features.inspector;
 
   const cliHelpOptions = [
     { compileConstant: HAVE_OPENSSL,
-      flags: [ '--openssl-config=file', '--tls-cipher-list=val',
-               '--use-bundled-ca', '--use-openssl-ca' ] },
-    { compileConstant: NODE_FIPS_MODE,
-      flags: [ '--enable-fips', '--force-fips' ] },
+      flags: [ '--openssl-config=...', '--tls-cipher-list=...',
+               '--use-bundled-ca', '--use-openssl-ca',
+               '--enable-fips', '--force-fips' ] },
     { compileConstant: NODE_HAVE_I18N_SUPPORT,
-      flags: [ '--experimental-modules', '--experimental-vm-modules',
-               '--icu-data-dir=dir', '--preserve-symlinks',
-               'NODE_ICU_DATA', 'NODE_PRESERVE_SYMLINKS' ] },
+      flags: [ '--icu-data-dir=...', 'NODE_ICU_DATA' ] },
     { compileConstant: HAVE_INSPECTOR,
       flags: [ '--inspect-brk[=[host:]port]', '--inspect-port=[host:]port',
                '--inspect[=[host:]port]' ] },
@@ -46,11 +41,13 @@ function validateNodePrintHelp() {
 function testForSubstring(options) {
   if (options.compileConstant) {
     options.flags.forEach((flag) => {
-      assert.strictEqual(stdOut.indexOf(flag) !== -1, true);
+      assert.strictEqual(stdOut.indexOf(flag) !== -1, true,
+                         `Missing flag ${flag} in ${stdOut}`);
     });
   } else {
     options.flags.forEach((flag) => {
-      assert.strictEqual(stdOut.indexOf(flag), -1);
+      assert.strictEqual(stdOut.indexOf(flag), -1,
+                         `Unexpected flag ${flag} in ${stdOut}`);
     });
   }
 }

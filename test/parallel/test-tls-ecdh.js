@@ -41,7 +41,7 @@ const options = {
   ecdhCurve: 'prime256v1'
 };
 
-const reply = 'I AM THE WALRUS'; // something recognizable
+const reply = 'I AM THE WALRUS'; // Something recognizable
 
 const server = tls.createServer(options, common.mustCall(function(conn) {
   conn.end(reply);
@@ -51,8 +51,7 @@ server.listen(0, '127.0.0.1', common.mustCall(function() {
   const cmd = `"${common.opensslCli}" s_client -cipher ${
     options.ciphers} -connect 127.0.0.1:${this.address().port}`;
 
-  exec(cmd, common.mustCall(function(err, stdout, stderr) {
-    assert.ifError(err);
+  exec(cmd, common.mustSucceed((stdout, stderr) => {
     assert(stdout.includes(reply));
     server.close();
   }));

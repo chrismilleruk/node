@@ -3,13 +3,11 @@
 require('../common');
 const assert = require('assert');
 
-/*
- * We need to check the following things:
- *  - We are correctly resolving big endian (doesn't mean anything for 8 bit)
- *  - Correctly resolving little endian (doesn't mean anything for 8 bit)
- *  - Correctly using the offsets
- *  - Correctly interpreting values that are beyond the signed range as unsigned
- */
+// We need to check the following things:
+//  - We are correctly resolving big endian (doesn't mean anything for 8 bit)
+//  - Correctly resolving little endian (doesn't mean anything for 8 bit)
+//  - Correctly using the offsets
+//  - Correctly interpreting values that are beyond the signed range as unsigned
 
 { // OOB
   const data = Buffer.alloc(8);
@@ -84,6 +82,18 @@ const assert = require('assert');
 
   data.writeUInt16BE(value, 0);
   assert.ok(data.equals(new Uint8Array([0xff, 0x80, 0x43, 0x23])));
+
+  value = 0xfffff;
+  ['writeUInt16BE', 'writeUInt16LE'].forEach((fn) => {
+    assert.throws(
+      () => data[fn](value, 0),
+      {
+        code: 'ERR_OUT_OF_RANGE',
+        message: 'The value of "value" is out of range. ' +
+                 `It must be >= 0 and <= 65535. Received ${value}`
+      }
+    );
+  });
 }
 
 // Test 32 bit
@@ -150,7 +160,7 @@ const assert = require('assert');
         () => data[fn](42, 0, byteLength),
         {
           code: 'ERR_OUT_OF_RANGE',
-          name: 'RangeError [ERR_OUT_OF_RANGE]',
+          name: 'RangeError',
           message: 'The value of "byteLength" is out of range. ' +
                    `It must be an integer. Received ${byteLength}`
         });
@@ -158,15 +168,19 @@ const assert = require('assert');
   });
 
   // Test 1 to 6 bytes.
-  for (let i = 1; i < 6; i++) {
+  for (let i = 1; i <= 6; i++) {
+    const range = i < 5 ? `= ${val - 1}` : ` 2 ** ${i * 8}`;
+    const received = i > 4 ?
+      String(val).replace(/(\d)(?=(\d\d\d)+(?!\d))/g, '$1_') :
+      val;
     ['writeUIntBE', 'writeUIntLE'].forEach((fn) => {
       assert.throws(() => {
         data[fn](val, 0, i);
       }, {
         code: 'ERR_OUT_OF_RANGE',
-        name: 'RangeError [ERR_OUT_OF_RANGE]',
+        name: 'RangeError',
         message: 'The value of "value" is out of range. ' +
-                 `It must be >= 0 and <= ${val - 1}. Received ${val}`
+                 `It must be >= 0 and <${range}. Received ${received}`
       });
 
       ['', '0', null, {}, [], () => {}, true, false].forEach((o) => {
@@ -174,7 +188,7 @@ const assert = require('assert');
           () => data[fn](23, o, i),
           {
             code: 'ERR_INVALID_ARG_TYPE',
-            name: 'TypeError [ERR_INVALID_ARG_TYPE]'
+            name: 'TypeError'
           });
       });
 
@@ -183,7 +197,7 @@ const assert = require('assert');
           () => data[fn](val - 1, offset, i),
           {
             code: 'ERR_OUT_OF_RANGE',
-            name: 'RangeError [ERR_OUT_OF_RANGE]',
+            name: 'RangeError',
             message: 'The value of "offset" is out of range. ' +
                      `It must be >= 0 and <= ${8 - i}. Received ${offset}`
           });
@@ -194,7 +208,7 @@ const assert = require('assert');
           () => data[fn](val - 1, offset, i),
           {
             code: 'ERR_OUT_OF_RANGE',
-            name: 'RangeError [ERR_OUT_OF_RANGE]',
+            name: 'RangeError',
             message: 'The value of "offset" is out of range. ' +
                      `It must be an integer. Received ${offset}`
           });
@@ -203,4 +217,14 @@ const assert = require('assert');
 
     val *= 0x100;
   }
+}
+
+for (const fn of [
+  'UInt8', 'UInt16LE', 'UInt16BE', 'UInt32LE', 'UInt32BE', 'UIntLE', 'UIntBE',
+  'BigUInt64LE', 'BigUInt64BE',
+]) {
+  const p = Buffer.prototype;
+  const lowerFn = fn.replace(/UInt/, 'Uint');
+  assert.strictEqual(p[`write${fn}`], p[`write${lowerFn}`]);
+  assert.strictEqual(p[`read${fn}`], p[`read${lowerFn}`]);
 }

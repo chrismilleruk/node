@@ -20,7 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-const common = require('../common');
+require('../common');
 const assert = require('assert');
 
 const order = [];
@@ -42,16 +42,12 @@ process.nextTick(function() {
 });
 
 function testNextTickWith(val) {
-  common.expectsError(
-    function() {
-      process.nextTick(val);
-    },
-    {
-      code: 'ERR_INVALID_CALLBACK',
-      name: 'TypeError [ERR_INVALID_CALLBACK]',
-      type: TypeError
-    }
-  );
+  assert.throws(() => {
+    process.nextTick(val);
+  }, {
+    code: 'ERR_INVALID_CALLBACK',
+    name: 'TypeError'
+  });
 }
 
 testNextTickWith(false);
@@ -61,7 +57,9 @@ testNextTickWith('str');
 testNextTickWith({});
 testNextTickWith([]);
 
-process.on('uncaughtException', function() {
+process.on('uncaughtException', function(err, errorOrigin) {
+  assert.strictEqual(errorOrigin, 'uncaughtException');
+
   if (!exceptionHandled) {
     exceptionHandled = true;
     order.push('B');
@@ -72,5 +70,5 @@ process.on('uncaughtException', function() {
 });
 
 process.on('exit', function() {
-  assert.deepStrictEqual(['A', 'B', 'C'], order);
+  assert.deepStrictEqual(order, ['A', 'B', 'C']);
 });

@@ -1,12 +1,10 @@
 'use strict';
 
 const common = require('../common.js');
-const PORT = common.PORT;
 
 const bench = common.createBenchmark(main, {
   n: [1e3],
-  nheaders: [0, 10, 100, 1000],
-  benchmarker: ['h2load']
+  nheaders: [0, 10, 100, 1000]
 }, { flags: ['--no-warnings'] });
 
 function main({ n, nheaders }) {
@@ -25,7 +23,7 @@ function main({ n, nheaders }) {
     'user-agent': 'SuperBenchmarker 3000'
   };
 
-  for (var i = 0; i < nheaders; i++) {
+  for (let i = 0; i < nheaders; i++) {
     headersObject[`foo${i}`] = `some header value ${i}`;
   }
 
@@ -33,15 +31,14 @@ function main({ n, nheaders }) {
     stream.respond();
     stream.end('Hi!');
   });
-  server.listen(PORT, () => {
-    const client = http2.connect(`http://localhost:${PORT}/`, {
+  server.listen(0, () => {
+    const client = http2.connect(`http://localhost:${server.address().port}/`, {
       maxHeaderListPairs: 20000
     });
 
     function doRequest(remaining) {
       const req = client.request(headersObject);
-      req.end();
-      req.on('data', () => {});
+      req.resume();
       req.on('end', () => {
         if (remaining > 0) {
           doRequest(remaining - 1);

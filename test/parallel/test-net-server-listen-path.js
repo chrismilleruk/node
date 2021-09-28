@@ -55,7 +55,7 @@ function randomPipePath() {
 {
   const handlePath = randomPipePath();
 
-  const srv = net.createServer()
+  const server = net.createServer()
     .listen({
       path: handlePath,
       readableAll: true,
@@ -63,9 +63,29 @@ function randomPipePath() {
     }, common.mustCall(() => {
       if (process.platform !== 'win32') {
         const mode = fs.statSync(handlePath).mode;
-        assert.ok(mode & fs.constants.S_IROTH !== 0);
-        assert.ok(mode & fs.constants.S_IWOTH !== 0);
+        assert.notStrictEqual(mode & fs.constants.S_IROTH, 0);
+        assert.notStrictEqual(mode & fs.constants.S_IWOTH, 0);
       }
-      srv.close();
+      server.close();
     }));
+}
+
+// Test should emit "error" events when listening fails.
+{
+  const handlePath = randomPipePath();
+  const server1 = net.createServer().listen({ path: handlePath }, () => {
+    // As the handlePath is in use, binding to the same address again should
+    // make the server emit an 'EADDRINUSE' error.
+    const server2 = net.createServer()
+      .listen({
+        path: handlePath,
+        writableAll: true,
+      }, common.mustNotCall());
+
+    server2.on('error', common.mustCall((err) => {
+      server1.close();
+      assert.strictEqual(err.code, 'EADDRINUSE');
+      assert.match(err.message, /^listen EADDRINUSE: address already in use/);
+    }));
+  });
 }

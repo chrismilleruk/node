@@ -8,9 +8,12 @@
 const utils = require('./rules-utils.js');
 
 module.exports = {
+  meta: {
+    fixable: 'code'
+  },
   create(context) {
     const sourceCode = context.getSourceCode();
-    var assertImported = false;
+    let assertImported = false;
 
     function hasSameTokens(nodeA, nodeB) {
       const aTokens = sourceCode.getTokens(nodeA);

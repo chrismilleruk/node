@@ -2,16 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#if !V8_ENABLE_WEBASSEMBLY
+#error This header should only be included if WebAssembly is enabled.
+#endif  // !V8_ENABLE_WEBASSEMBLY
+
 #ifndef V8_WASM_SIGNATURE_MAP_H_
 #define V8_WASM_SIGNATURE_MAP_H_
 
-#include <map>
+#include <unordered_map>
 
-#include "src/signature.h"
-#include "src/wasm/wasm-opcodes.h"
+#include "src/codegen/signature.h"
+#include "src/wasm/value-type.h"
 
 namespace v8 {
 namespace internal {
+
 namespace wasm {
 
 // A signature map canonicalizes signatures into a range of indices so that
@@ -25,22 +30,21 @@ class V8_EXPORT_PRIVATE SignatureMap {
   MOVE_ONLY_WITH_DEFAULT_CONSTRUCTORS(SignatureMap);
 
   // Gets the index for a signature, assigning a new index if necessary.
-  uint32_t FindOrInsert(FunctionSig* sig);
+  uint32_t FindOrInsert(const FunctionSig& sig);
 
   // Gets the index for a signature, returning {-1} if not found.
-  int32_t Find(FunctionSig* sig) const;
+  int32_t Find(const FunctionSig& sig) const;
 
   // Disallows further insertions to this signature map.
   void Freeze() { frozen_ = true; }
 
+  size_t size() const { return map_.size(); }
+
+  bool is_frozen() const { return frozen_; }
+
  private:
-  // TODO(wasm): use a hashmap instead of an ordered map?
-  struct CompareFunctionSigs {
-    bool operator()(FunctionSig* a, FunctionSig* b) const;
-  };
-  uint32_t next_ = 0;
   bool frozen_ = false;
-  std::map<FunctionSig*, uint32_t, CompareFunctionSigs> map_;
+  std::unordered_map<FunctionSig, uint32_t, base::hash<FunctionSig>> map_;
 };
 
 }  // namespace wasm

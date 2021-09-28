@@ -1,4 +1,4 @@
-// Flags: --expose_internals
+// Flags: --expose-internals
 
 'use strict';
 
@@ -8,6 +8,7 @@ if (!common.hasCrypto)
 const assert = require('assert');
 const h2 = require('http2');
 const net = require('net');
+const util = require('util');
 
 const { kTimeout } = require('internal/timers');
 
@@ -15,7 +16,7 @@ const { kTimeout } = require('internal/timers');
 
 const errMsg = {
   code: 'ERR_HTTP2_NO_SOCKET_MANIPULATION',
-  type: Error,
+  name: 'Error',
   message: 'HTTP/2 sockets should not be directly manipulated ' +
            '(e.g. read and written)'
 };
@@ -35,34 +36,76 @@ server.on('stream', common.mustCall(function(stream, headers) {
   socket.setTimeout(987);
   assert.strictEqual(session[kTimeout]._idleTimeout, 987);
 
-  common.expectsError(() => socket.destroy, errMsg);
-  common.expectsError(() => socket.emit, errMsg);
-  common.expectsError(() => socket.end, errMsg);
-  common.expectsError(() => socket.pause, errMsg);
-  common.expectsError(() => socket.read, errMsg);
-  common.expectsError(() => socket.resume, errMsg);
-  common.expectsError(() => socket.write, errMsg);
+  // The indentation is corrected depending on the depth.
+  let inspectedTimeout = util.inspect(session[kTimeout]);
+  assert(inspectedTimeout.includes('  _idlePrev: [TimersList]'));
+  assert(inspectedTimeout.includes('  _idleNext: [TimersList]'));
+  assert(!inspectedTimeout.includes('   _idleNext: [TimersList]'));
 
-  common.expectsError(() => (socket.destroy = undefined), errMsg);
-  common.expectsError(() => (socket.emit = undefined), errMsg);
-  common.expectsError(() => (socket.end = undefined), errMsg);
-  common.expectsError(() => (socket.pause = undefined), errMsg);
-  common.expectsError(() => (socket.read = undefined), errMsg);
-  common.expectsError(() => (socket.resume = undefined), errMsg);
-  common.expectsError(() => (socket.write = undefined), errMsg);
+  inspectedTimeout = util.inspect([ session[kTimeout] ]);
+  assert(inspectedTimeout.includes('    _idlePrev: [TimersList]'));
+  assert(inspectedTimeout.includes('    _idleNext: [TimersList]'));
+  assert(!inspectedTimeout.includes('     _idleNext: [TimersList]'));
+
+  const inspectedTimersList = util.inspect([[ session[kTimeout]._idlePrev ]]);
+  assert(inspectedTimersList.includes('      _idlePrev: [Timeout]'));
+  assert(inspectedTimersList.includes('      _idleNext: [Timeout]'));
+  assert(!inspectedTimersList.includes('       _idleNext: [Timeout]'));
+
+  assert.throws(() => socket.destroy, errMsg);
+  assert.throws(() => socket.emit, errMsg);
+  assert.throws(() => socket.end, errMsg);
+  assert.throws(() => socket.pause, errMsg);
+  assert.throws(() => socket.read, errMsg);
+  assert.throws(() => socket.resume, errMsg);
+  assert.throws(() => socket.write, errMsg);
+  assert.throws(() => socket.setEncoding, errMsg);
+  assert.throws(() => socket.setKeepAlive, errMsg);
+  assert.throws(() => socket.setNoDelay, errMsg);
+
+  assert.throws(() => (socket.destroy = undefined), errMsg);
+  assert.throws(() => (socket.emit = undefined), errMsg);
+  assert.throws(() => (socket.end = undefined), errMsg);
+  assert.throws(() => (socket.pause = undefined), errMsg);
+  assert.throws(() => (socket.read = undefined), errMsg);
+  assert.throws(() => (socket.resume = undefined), errMsg);
+  assert.throws(() => (socket.write = undefined), errMsg);
+  assert.throws(() => (socket.setEncoding = undefined), errMsg);
+  assert.throws(() => (socket.setKeepAlive = undefined), errMsg);
+  assert.throws(() => (socket.setNoDelay = undefined), errMsg);
 
   // Resetting the socket listeners to their own value should not throw.
-  socket.on = socket.on;
-  socket.once = socket.once;
+  socket.on = socket.on;  // eslint-disable-line no-self-assign
+  socket.once = socket.once;  // eslint-disable-line no-self-assign
+
+  socket.unref();
+  assert.strictEqual(socket._handle.hasRef(), false);
+  socket.ref();
+  assert.strictEqual(socket._handle.hasRef(), true);
 
   stream.respond();
 
-  socket.writable = 0;
-  socket.readable = 0;
-  assert.strictEqual(socket.writable, 0);
-  assert.strictEqual(socket.readable, 0);
+  socket.writable = true;
+  socket.readable = true;
+  assert.strictEqual(socket.writable, true);
+  assert.strictEqual(socket.readable, true);
+  socket.writable = false;
+  socket.readable = false;
+  assert.strictEqual(socket.writable, false);
+  assert.strictEqual(socket.readable, false);
 
   stream.end();
+
+  // Setting socket properties sets the session properties correctly.
+  const fn = () => {};
+  socket.setTimeout = fn;
+  assert.strictEqual(session.setTimeout, fn);
+
+  socket.ref = fn;
+  assert.strictEqual(session.ref, fn);
+
+  socket.unref = fn;
+  assert.strictEqual(session.unref, fn);
 
   stream.session.on('close', common.mustCall(() => {
     assert.strictEqual(session.socket, undefined);

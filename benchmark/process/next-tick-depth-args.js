@@ -2,10 +2,8 @@
 
 const common = require('../common.js');
 const bench = common.createBenchmark(main, {
-  n: [12e6]
+  n: [7e6]
 });
-
-process.maxTickDepth = Infinity;
 
 function main({ n }) {
   let counter = n;
@@ -22,6 +20,7 @@ function main({ n }) {
     } else
       bench.end(n);
   }
+
   function cb3(arg1, arg2, arg3) {
     if (--counter) {
       if (counter % 4 === 0)
@@ -35,6 +34,7 @@ function main({ n }) {
     } else
       bench.end(n);
   }
+
   function cb2(arg1, arg2) {
     if (--counter) {
       if (counter % 4 === 0)
@@ -48,6 +48,7 @@ function main({ n }) {
     } else
       bench.end(n);
   }
+
   function cb1(arg1) {
     if (--counter) {
       if (counter % 4 === 0)

@@ -27,7 +27,7 @@
 
 // Flags: --allow-natives-syntax --no-always-opt
 // Flags: --concurrent-recompilation --block-concurrent-recompilation
-// Flags: --no-always-opt
+// Flags: --no-always-opt --no-turbo-concurrent-get-property-access-info
 
 if (!%IsConcurrentRecompilationSupported()) {
   print("Concurrent recompilation is disabled. Skipping this test.");
@@ -35,6 +35,8 @@ if (!%IsConcurrentRecompilationSupported()) {
 }
 
 function f(foo) { return foo.bar(); }
+
+%PrepareFunctionForOptimization(f);
 
 var o = {};
 o.__proto__ = { __proto__: { bar: function() { return 1; } } };

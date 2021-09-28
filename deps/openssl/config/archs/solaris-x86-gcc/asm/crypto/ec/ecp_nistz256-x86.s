@@ -1,4 +1,3 @@
-.file	"ecp_nistz256-x86.s"
 .text
 .globl	ecp_nistz256_precomputed
 .align	4096
@@ -3857,7 +3856,7 @@ ecp_nistz256_scatter_w7:
 	movl	20(%esp),%edi
 	movl	24(%esp),%esi
 	movl	28(%esp),%ebp
-	leal	-1(%edi,%ebp,1),%edi
+	leal	(%edi,%ebp,1),%edi
 	movl	$16,%ebp
 .L007scatter_w7_loop:
 	movl	(%esi),%eax
@@ -4420,19 +4419,15 @@ ecp_nistz256_point_add:
 	orl	4(%edi),%eax
 	orl	8(%edi),%eax
 	orl	12(%edi),%eax
+	movl	576(%esp),%ebx
+	notl	%ebx
+	orl	%ebx,%eax
+	movl	580(%esp),%ebx
+	notl	%ebx
+	orl	%ebx,%eax
+	orl	584(%esp),%eax
 .byte	62
 	jnz	.L010add_proceed
-	movl	576(%esp),%eax
-	andl	580(%esp),%eax
-	movl	584(%esp),%ebx
-	jz	.L010add_proceed
-	testl	%ebx,%ebx
-	jz	.L011add_double
-	movl	616(%esp),%edi
-	xorl	%eax,%eax
-	movl	$24,%ecx
-.byte	252,243,171
-	jmp	.L012add_done
 .align	16
 .L011add_double:
 	movl	620(%esp),%esi

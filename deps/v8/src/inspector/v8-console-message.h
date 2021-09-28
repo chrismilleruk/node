@@ -7,7 +7,9 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 #include <set>
+
 #include "include/v8.h"
 #include "src/inspector/protocol/Console.h"
 #include "src/inspector/protocol/Forward.h"
@@ -83,6 +85,8 @@ class V8ConsoleMessage {
   void setLocation(const String16& url, unsigned lineNumber,
                    unsigned columnNumber, std::unique_ptr<V8StackTraceImpl>,
                    int scriptId);
+  std::unique_ptr<protocol::DictionaryValue> getAssociatedExceptionData(
+      V8InspectorImpl* inspector, V8InspectorSessionImpl* session) const;
 
   V8MessageOrigin m_origin;
   double m_timestamp;
@@ -118,7 +122,9 @@ class V8ConsoleMessageStorage {
 
   bool shouldReportDeprecationMessage(int contextId, const String16& method);
   int count(int contextId, const String16& id);
+  bool countReset(int contextId, const String16& id);
   void time(int contextId, const String16& id);
+  double timeLog(int contextId, const String16& id);
   double timeEnd(int contextId, const String16& id);
   bool hasTimer(int contextId, const String16& id);
 
@@ -130,7 +136,9 @@ class V8ConsoleMessageStorage {
 
   struct PerContextData {
     std::set<String16> m_reportedDeprecationMessages;
+    // Corresponds to https://console.spec.whatwg.org/#count-map
     std::map<String16, int> m_count;
+    // Corresponds to https://console.spec.whatwg.org/#timer-table
     std::map<String16, double> m_time;
   };
   std::map<int, PerContextData> m_data;

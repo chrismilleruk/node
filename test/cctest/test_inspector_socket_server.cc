@@ -1,9 +1,12 @@
 #include "inspector_socket_server.h"
 
 #include "node.h"
+#include "node_options.h"
+#include "util-inl.h"
 #include "gtest/gtest.h"
 
 #include <algorithm>
+#include <memory>
 #include <sstream>
 
 static uv_loop_t loop;
@@ -14,7 +17,6 @@ static const char CLIENT_CLOSE_FRAME[] = "\x88\x80\x2D\x0E\x1E\xFA";
 static const char SERVER_CLOSE_FRAME[] = "\x88\x00";
 
 static const char MAIN_TARGET_ID[] = "main-target";
-static const char UNCONNECTABLE_TARGET_ID[] = "unconnectable-target";
 
 static const char WS_HANDSHAKE_RESPONSE[] =
     "HTTP/1.1 101 Switching Protocols\r\n"
@@ -93,7 +95,7 @@ class SocketWrapper {
                                             connected_(false),
                                             sending_(false) { }
 
-  void Connect(std::string host, int port, bool v6 = false) {
+  void Connect(const std::string& host, int port, bool v6 = false) {
     closed_ = false;
     connection_failed_ = false;
     connected_ = false;
@@ -115,7 +117,7 @@ class SocketWrapper {
                   ReadCallback);
   }
 
-  void ExpectFailureToConnect(std::string host, int port) {
+  void ExpectFailureToConnect(const std::string& host, int port) {
     connected_ = false;
     connection_failed_ = false;
     closed_ = false;
@@ -244,7 +246,7 @@ class ServerHolder {
                : ServerHolder(has_targets, loop, HOST, port, nullptr) { }
 
   ServerHolder(bool has_targets, uv_loop_t* loop,
-               const std::string host, int port, FILE* out);
+               const std::string& host, int port, FILE* out);
 
   InspectorSocketServer* operator->() {
     return server_.get();
@@ -258,10 +260,6 @@ class ServerHolder {
     return server_->done();
   }
 
-  void Connected() {
-    connected++;
-  }
-
   void Disconnected() {
     disconnected++;
   }
@@ -270,9 +268,10 @@ class ServerHolder {
     delegate_done = true;
   }
 
-  void PrepareSession(int id) {
+  void Connected(int id) {
     buffer_.clear();
     session_id_ = id;
+    connected++;
   }
 
   void Received(const std::string& message) {
@@ -309,7 +308,7 @@ class TestSocketServerDelegate : public SocketServerDelegate {
         targets_(target_ids),
         session_id_(0) {}
 
-  ~TestSocketServerDelegate() {
+  ~TestSocketServerDelegate() override {
     harness_->Done();
   }
 
@@ -319,15 +318,9 @@ class TestSocketServerDelegate : public SocketServerDelegate {
 
   void StartSession(int session_id, const std::string& target_id) override {
     session_id_ = session_id;
-    harness_->PrepareSession(session_id_);
     CHECK_NE(targets_.end(),
              std::find(targets_.begin(), targets_.end(), target_id));
-    if (target_id == UNCONNECTABLE_TARGET_ID) {
-      server_->DeclineSession(session_id);
-      return;
-    }
-    harness_->Connected();
-    server_->AcceptSession(session_id);
+    harness_->Connected(session_id_);
   }
 
   void MessageReceived(int session_id, const std::string& message) override {
@@ -360,14 +353,17 @@ class TestSocketServerDelegate : public SocketServerDelegate {
 };
 
 ServerHolder::ServerHolder(bool has_targets, uv_loop_t* loop,
-                           const std::string host, int port, FILE* out) {
+                           const std::string& host, int port, FILE* out) {
   std::vector<std::string> targets;
   if (has_targets)
-    targets = { MAIN_TARGET_ID, UNCONNECTABLE_TARGET_ID };
+    targets = { MAIN_TARGET_ID };
   std::unique_ptr<TestSocketServerDelegate> delegate(
       new TestSocketServerDelegate(this, targets));
-  server_.reset(
-      new InspectorSocketServer(std::move(delegate), loop, host, port, out));
+  node::InspectPublishUid inspect_publish_uid;
+  inspect_publish_uid.console = true;
+  inspect_publish_uid.http = true;
+  server_ = std::make_unique<InspectorSocketServer>(
+      std::move(delegate), loop, host, port, inspect_publish_uid, out);
 }
 
 static void TestHttpRequest(int port, const std::string& path,
@@ -413,15 +409,6 @@ TEST_F(InspectorSocketServerTest, InspectorSessions) {
   EXPECT_EQ(1, server.disconnected);
 
   well_behaved_socket.Close();
-
-  // Declined connection
-  SocketWrapper declined_target_socket(&loop);
-  declined_target_socket.Connect(HOST, server.port());
-  declined_target_socket.Write(WsHandshakeRequest(UNCONNECTABLE_TARGET_ID));
-  declined_target_socket.Expect("HTTP/1.0 400 Bad Request");
-  declined_target_socket.ExpectEOF();
-  EXPECT_EQ(1, server.connected);
-  EXPECT_EQ(1, server.disconnected);
 
   // Bogus target - start session callback should not even be invoked
   SocketWrapper bogus_target_socket(&loop);
@@ -491,7 +478,7 @@ TEST_F(InspectorSocketServerTest, ServerWithoutTargets) {
   // Declined connection
   SocketWrapper socket(&loop);
   socket.Connect(HOST, server.port());
-  socket.Write(WsHandshakeRequest(UNCONNECTABLE_TARGET_ID));
+  socket.Write(WsHandshakeRequest("any target id"));
   socket.Expect("HTTP/1.0 400 Bad Request");
   socket.ExpectEOF();
   server->Stop();

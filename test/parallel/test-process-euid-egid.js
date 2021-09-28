@@ -3,22 +3,23 @@
 const common = require('../common');
 const assert = require('assert');
 
-if (common.isWindows || !common.isMainThread) {
-  if (common.isMainThread) {
-    assert.strictEqual(process.geteuid, undefined);
-    assert.strictEqual(process.getegid, undefined);
-  }
+if (common.isWindows) {
+  assert.strictEqual(process.geteuid, undefined);
+  assert.strictEqual(process.getegid, undefined);
   assert.strictEqual(process.seteuid, undefined);
   assert.strictEqual(process.setegid, undefined);
   return;
 }
+
+if (!common.isMainThread)
+  return;
 
 assert.throws(() => {
   process.seteuid({});
 }, {
   code: 'ERR_INVALID_ARG_TYPE',
   message: 'The "id" argument must be one of type number or string. ' +
-    'Received type object'
+    'Received an instance of Object'
 });
 
 assert.throws(() => {
@@ -27,6 +28,10 @@ assert.throws(() => {
   code: 'ERR_UNKNOWN_CREDENTIAL',
   message: 'User identifier does not exist: fhqwhgadshgnsdhjsdbkhsdabkfabkveyb'
 });
+
+// IBMi does not support below operations.
+if (common.isIBMi)
+  return;
 
 // If we're not running as super user...
 if (process.getuid() !== 0) {

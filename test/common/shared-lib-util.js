@@ -2,10 +2,14 @@
 const common = require('../common');
 const path = require('path');
 
+const kNodeShared = Boolean(process.config.variables.node_shared);
+const kShlibSuffix = process.config.variables.shlib_suffix;
+const kExecPath = path.dirname(process.execPath);
+
 // If node executable is linked to shared lib, need to take care about the
 // shared lib path.
-exports.addLibraryPath = function(env) {
-  if (!process.config.variables.node_shared) {
+function addLibraryPath(env) {
+  if (!kNodeShared) {
     return;
   }
 
@@ -13,37 +17,34 @@ exports.addLibraryPath = function(env) {
 
   env.LD_LIBRARY_PATH =
     (env.LD_LIBRARY_PATH ? env.LD_LIBRARY_PATH + path.delimiter : '') +
-    path.join(path.dirname(process.execPath), 'lib.target');
+    kExecPath;
   // For AIX.
   env.LIBPATH =
     (env.LIBPATH ? env.LIBPATH + path.delimiter : '') +
-    path.join(path.dirname(process.execPath), 'lib.target');
+    kExecPath;
   // For Mac OSX.
   env.DYLD_LIBRARY_PATH =
     (env.DYLD_LIBRARY_PATH ? env.DYLD_LIBRARY_PATH + path.delimiter : '') +
-    path.dirname(process.execPath);
+    kExecPath;
   // For Windows.
-  env.PATH =
-    (env.PATH ? env.PATH + path.delimiter : '') +
-    path.dirname(process.execPath);
-};
+  env.PATH = (env.PATH ? env.PATH + path.delimiter : '') + kExecPath;
+}
 
 // Get the full path of shared lib.
-exports.getSharedLibPath = function() {
+function getSharedLibPath() {
   if (common.isWindows) {
-    return path.join(path.dirname(process.execPath), 'node.dll');
-  } else if (common.isOSX) {
-    return path.join(path.dirname(process.execPath),
-                     `libnode.${process.config.variables.shlib_suffix}`);
-  } else {
-    return path.join(path.dirname(process.execPath),
-                     'lib.target',
-                     `libnode.${process.config.variables.shlib_suffix}`);
+    return path.join(kExecPath, 'node.dll');
   }
-};
+  return path.join(kExecPath, `libnode.${kShlibSuffix}`);
+}
 
 // Get the binary path of stack frames.
-exports.getBinaryPath = function() {
-  return process.config.variables.node_shared ?
-    exports.getSharedLibPath() : process.execPath;
+function getBinaryPath() {
+  return kNodeShared ? getSharedLibPath() : process.execPath;
+}
+
+module.exports = {
+  addLibraryPath,
+  getBinaryPath,
+  getSharedLibPath
 };

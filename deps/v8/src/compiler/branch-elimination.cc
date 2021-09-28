@@ -4,6 +4,7 @@
 
 #include "src/compiler/branch-elimination.h"
 
+#include "src/base/small-vector.h"
 #include "src/compiler/js-graph.h"
 #include "src/compiler/node-properties.h"
 #include "src/compiler/simplified-operator.h"
@@ -13,16 +14,16 @@ namespace internal {
 namespace compiler {
 
 BranchElimination::BranchElimination(Editor* editor, JSGraph* js_graph,
-                                     Zone* zone)
+                                     Zone* zone, Phase phase)
     : AdvancedReducer(editor),
       jsgraph_(js_graph),
       node_conditions_(js_graph->graph()->NodeCount(), zone),
       reduced_(js_graph->graph()->NodeCount(), zone),
       zone_(zone),
-      dead_(js_graph->Dead()) {}
+      dead_(js_graph->Dead()),
+      phase_(phase) {}
 
-BranchElimination::~BranchElimination() {}
-
+BranchElimination::~BranchElimination() = default;
 
 Reduction BranchElimination::Reduce(Node* node) {
   switch (node->opcode()) {
@@ -41,6 +42,9 @@ Reduction BranchElimination::Reduce(Node* node) {
       return ReduceIf(node, false);
     case IrOpcode::kIfTrue:
       return ReduceIf(node, true);
+    case IrOpcode::kTrapIf:
+    case IrOpcode::kTrapUnless:
+      return ReduceTrapConditional(node);
     case IrOpcode::kStart:
       return ReduceStart(node);
     default:
@@ -52,6 +56,74 @@ Reduction BranchElimination::Reduce(Node* node) {
   return NoChange();
 }
 
+void BranchElimination::SimplifyBranchCondition(Node* branch) {
+  // Try to use a phi as a branch condition if the control flow from the branch
+  // is known from previous branches. For example, in the graph below, the
+  // control flow of the second_branch is predictable because the first_branch
+  // use the same branch condition. In such case, create a new phi with constant
+  // inputs and let the second branch use the phi as its branch condition. From
+  // this transformation, more branch folding opportunities would be exposed to
+  // later passes through branch cloning in effect-control-linearizer.
+  //
+  // condition                             condition
+  //    |   \                                   |
+  //    |  first_branch                        first_branch
+  //    |   /          \                       /          \
+  //    |  /            \                     /            \
+  //    |first_true  first_false           first_true  first_false
+  //    |  \           /                      \           /
+  //    |   \         /                        \         /
+  //    |  first_merge           ==>          first_merge
+  //    |       |                              /    |
+  //   second_branch                    1  0  /     |
+  //    /          \                     \ | /      |
+  //   /            \                     phi       |
+  // second_true  second_false              \       |
+  //                                      second_branch
+  //                                      /          \
+  //                                     /            \
+  //                                   second_true  second_false
+  //
+
+  DCHECK_EQ(IrOpcode::kBranch, branch->opcode());
+  Node* merge = NodeProperties::GetControlInput(branch);
+  if (merge->opcode() != IrOpcode::kMerge) return;
+
+  Node* branch_condition = branch->InputAt(0);
+  Node* previous_branch;
+  bool condition_value;
+  Graph* graph = jsgraph()->graph();
+  base::SmallVector<Node*, 2> phi_inputs;
+
+  Node::Inputs inputs = merge->inputs();
+  int input_count = inputs.count();
+  for (int i = 0; i != input_count; ++i) {
+    Node* input = inputs[i];
+    ControlPathConditions from_input = node_conditions_.Get(input);
+    if (!from_input.LookupCondition(branch_condition, &previous_branch,
+                                    &condition_value))
+      return;
+
+    if (phase_ == kEARLY) {
+      phi_inputs.emplace_back(condition_value ? jsgraph()->TrueConstant()
+                                              : jsgraph()->FalseConstant());
+    } else {
+      phi_inputs.emplace_back(
+          condition_value
+              ? graph->NewNode(jsgraph()->common()->Int32Constant(1))
+              : graph->NewNode(jsgraph()->common()->Int32Constant(0)));
+    }
+  }
+  phi_inputs.emplace_back(merge);
+  Node* new_phi = graph->NewNode(
+      common()->Phi(phase_ == kEARLY ? MachineRepresentation::kTagged
+                                     : MachineRepresentation::kWord32,
+                    input_count),
+      input_count + 1, &phi_inputs.at(0));
+
+  // Replace the branch condition with the new phi.
+  NodeProperties::ReplaceValueInput(branch, new_phi, 0);
+}
 
 Reduction BranchElimination::ReduceBranch(Node* node) {
   Node* condition = node->InputAt(0);
@@ -61,14 +133,7 @@ Reduction BranchElimination::ReduceBranch(Node* node) {
   bool condition_value;
   // If we know the condition we can discard the branch.
   if (from_input.LookupCondition(condition, &branch, &condition_value)) {
-    // Mark the branch as a safety check.
-    // Check if {branch} is dead because we might have a stale side-table entry.
-    if (IsSafetyCheckOf(node->op()) == IsSafetyCheck::kSafetyCheck &&
-        !branch->IsDead()) {
-      NodeProperties::ChangeOp(branch,
-                               common()->MarkAsSafetyCheck(branch->op()));
-    }
-
+    MarkAsSafetyCheckIfNeeded(branch, node);
     for (Node* const use : node->uses()) {
       switch (use->opcode()) {
         case IrOpcode::kIfTrue:
@@ -83,7 +148,48 @@ Reduction BranchElimination::ReduceBranch(Node* node) {
     }
     return Replace(dead());
   }
+  SimplifyBranchCondition(node);
+  // Trigger revisits of the IfTrue/IfFalse projections, since they depend on
+  // the branch condition.
+  for (Node* const use : node->uses()) {
+    Revisit(use);
+  }
   return TakeConditionsFromFirstControl(node);
+}
+
+Reduction BranchElimination::ReduceTrapConditional(Node* node) {
+  DCHECK(node->opcode() == IrOpcode::kTrapIf ||
+         node->opcode() == IrOpcode::kTrapUnless);
+  bool trapping_condition = node->opcode() == IrOpcode::kTrapIf;
+  Node* condition = node->InputAt(0);
+  Node* control_input = NodeProperties::GetControlInput(node, 0);
+  // If we do not know anything about the predecessor, do not propagate just
+  // yet because we will have to recompute anyway once we compute the
+  // predecessor.
+  if (!reduced_.Get(control_input)) {
+    return NoChange();
+  }
+  ControlPathConditions from_input = node_conditions_.Get(control_input);
+  Node* branch;
+  bool condition_value;
+
+  if (from_input.LookupCondition(condition, &branch, &condition_value)) {
+    if (condition_value == trapping_condition) {
+      // This will always trap. Mark its outputs as dead and connect it to
+      // graph()->end().
+      ReplaceWithValue(node, dead(), dead(), dead());
+      Node* effect = NodeProperties::GetEffectInput(node);
+      Node* control = graph()->NewNode(common()->Throw(), effect, node);
+      NodeProperties::MergeControlToEnd(graph(), common(), control);
+      Revisit(graph()->end());
+      return Changed(node);
+    } else {
+      // This will not trap, remove it.
+      return Replace(control_input);
+    }
+  }
+  return UpdateConditions(node, from_input, condition, node,
+                          !trapping_condition, false);
 }
 
 Reduction BranchElimination::ReduceDeoptimizeConditional(Node* node) {
@@ -105,14 +211,9 @@ Reduction BranchElimination::ReduceDeoptimizeConditional(Node* node) {
   ControlPathConditions conditions = node_conditions_.Get(control);
   bool condition_value;
   Node* branch;
+  // If we know the condition we can discard the branch.
   if (conditions.LookupCondition(condition, &branch, &condition_value)) {
-    // Mark the branch as a safety check.
-    if (p.is_safety_check() == IsSafetyCheck::kSafetyCheck) {
-      NodeProperties::ChangeOp(branch,
-                               common()->MarkAsSafetyCheck(branch->op()));
-    }
-
-    // If we know the condition we can discard the branch.
+    MarkAsSafetyCheckIfNeeded(branch, node);
     if (condition_is_true == condition_value) {
       // We don't update the conditions here, because we're replacing {node}
       // with the {control} node that already contains the right information.
@@ -127,7 +228,8 @@ Reduction BranchElimination::ReduceDeoptimizeConditional(Node* node) {
     }
     return Replace(dead());
   }
-  return UpdateConditions(node, conditions, condition, node, condition_is_true);
+  return UpdateConditions(node, conditions, condition, node, condition_is_true,
+                          false);
 }
 
 Reduction BranchElimination::ReduceIf(Node* node, bool is_true_branch) {
@@ -141,9 +243,9 @@ Reduction BranchElimination::ReduceIf(Node* node, bool is_true_branch) {
     return NoChange();
   }
   Node* condition = branch->InputAt(0);
-  return UpdateConditions(node, from_branch, condition, branch, is_true_branch);
+  return UpdateConditions(node, from_branch, condition, branch, is_true_branch,
+                          true);
 }
-
 
 Reduction BranchElimination::ReduceLoop(Node* node) {
   // Here we rely on having only reducible loops:
@@ -151,7 +253,6 @@ Reduction BranchElimination::ReduceLoop(Node* node) {
   // the information from the loop entry edge.
   return TakeConditionsFromFirstControl(node);
 }
-
 
 Reduction BranchElimination::ReduceMerge(Node* node) {
   // Shortcut for the case when we do not know anything about some
@@ -173,25 +274,22 @@ Reduction BranchElimination::ReduceMerge(Node* node) {
   // inputs.
   auto input_end = inputs.end();
   for (; input_it != input_end; ++input_it) {
-    // Change the current condition list to a longest common tail
-    // of this condition list and the other list. (The common tail
-    // should correspond to the list from the common dominator.)
+    // Change the current condition block list to a longest common tail of this
+    // condition list and the other list. (The common tail should correspond to
+    // the list from the common dominator.)
     conditions.ResetToCommonAncestor(node_conditions_.Get(*input_it));
   }
   return UpdateConditions(node, conditions);
 }
 
-
 Reduction BranchElimination::ReduceStart(Node* node) {
   return UpdateConditions(node, {});
 }
-
 
 Reduction BranchElimination::ReduceOtherControl(Node* node) {
   DCHECK_EQ(1, node->op()->ControlInputCount());
   return TakeConditionsFromFirstControl(node);
 }
-
 
 Reduction BranchElimination::TakeConditionsFromFirstControl(Node* node) {
   // We just propagate the information from the control input (ideally,
@@ -213,40 +311,91 @@ Reduction BranchElimination::UpdateConditions(
 
 Reduction BranchElimination::UpdateConditions(
     Node* node, ControlPathConditions prev_conditions, Node* current_condition,
-    Node* current_branch, bool is_true_branch) {
-  ControlPathConditions original = node_conditions_.Get(node);
+    Node* current_branch, bool is_true_branch, bool in_new_block) {
   // The control path for the node is the path obtained by appending the
   // current_condition to the prev_conditions. Use the original control path as
   // a hint to avoid allocations.
-  prev_conditions.AddCondition(zone_, current_condition, current_branch,
-                               is_true_branch, original);
+  if (in_new_block || prev_conditions.Size() == 0) {
+    prev_conditions.AddConditionInNewBlock(zone_, current_condition,
+                                           current_branch, is_true_branch);
+  } else {
+    ControlPathConditions original = node_conditions_.Get(node);
+    prev_conditions.AddCondition(zone_, current_condition, current_branch,
+                                 is_true_branch, original);
+  }
   return UpdateConditions(node, prev_conditions);
 }
 
 void BranchElimination::ControlPathConditions::AddCondition(
     Zone* zone, Node* condition, Node* branch, bool is_true,
     ControlPathConditions hint) {
-  DCHECK_EQ(false, LookupCondition(condition, nullptr, nullptr));
-  PushFront({condition, branch, is_true}, zone, hint);
+  if (!LookupCondition(condition)) {
+    FunctionalList<BranchCondition> prev_front = Front();
+    if (hint.Size() > 0) {
+      prev_front.PushFront({condition, branch, is_true}, zone, hint.Front());
+    } else {
+      prev_front.PushFront({condition, branch, is_true}, zone);
+    }
+    DropFront();
+    PushFront(prev_front, zone);
+  }
+}
+
+void BranchElimination::ControlPathConditions::AddConditionInNewBlock(
+    Zone* zone, Node* condition, Node* branch, bool is_true) {
+  FunctionalList<BranchCondition> new_block;
+  if (!LookupCondition(condition)) {
+    new_block.PushFront({condition, branch, is_true}, zone);
+  }
+  PushFront(new_block, zone);
+}
+
+bool BranchElimination::ControlPathConditions::LookupCondition(
+    Node* condition) const {
+  for (auto block : *this) {
+    for (BranchCondition element : block) {
+      if (element.condition == condition) return true;
+    }
+  }
+  return false;
 }
 
 bool BranchElimination::ControlPathConditions::LookupCondition(
     Node* condition, Node** branch, bool* is_true) const {
-  for (BranchCondition element : *this) {
-    if (element.condition == condition) {
-      *is_true = element.is_true;
-      *branch = element.branch;
-      return true;
+  for (auto block : *this) {
+    for (BranchCondition element : block) {
+      if (element.condition == condition) {
+        *is_true = element.is_true;
+        *branch = element.branch;
+        return true;
+      }
     }
   }
   return false;
-  }
+}
 
-  Graph* BranchElimination::graph() const { return jsgraph()->graph(); }
-
-  CommonOperatorBuilder* BranchElimination::common() const {
-    return jsgraph()->common();
+void BranchElimination::MarkAsSafetyCheckIfNeeded(Node* branch, Node* node) {
+  // Check if {branch} is dead because we might have a stale side-table entry.
+  if (!branch->IsDead() && branch->opcode() != IrOpcode::kDead &&
+      branch->opcode() != IrOpcode::kTrapIf &&
+      branch->opcode() != IrOpcode::kTrapUnless) {
+    IsSafetyCheck branch_safety = IsSafetyCheckOf(branch->op());
+    IsSafetyCheck combined_safety =
+        CombineSafetyChecks(branch_safety, IsSafetyCheckOf(node->op()));
+    if (branch_safety != combined_safety) {
+      NodeProperties::ChangeOp(
+          branch, common()->MarkAsSafetyCheck(branch->op(), combined_safety));
+    }
   }
+}
+
+Graph* BranchElimination::graph() const { return jsgraph()->graph(); }
+
+Isolate* BranchElimination::isolate() const { return jsgraph()->isolate(); }
+
+CommonOperatorBuilder* BranchElimination::common() const {
+  return jsgraph()->common();
+}
 
 }  // namespace compiler
 }  // namespace internal

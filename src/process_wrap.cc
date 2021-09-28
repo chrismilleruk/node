@@ -20,14 +20,12 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include "env-inl.h"
-#include "handle_wrap.h"
-#include "node_internals.h"
-#include "node_wrap.h"
 #include "stream_base-inl.h"
+#include "stream_wrap.h"
 #include "util-inl.h"
 
-#include <string.h>
-#include <stdlib.h>
+#include <cstring>
+#include <cstdlib>
 
 namespace node {
 
@@ -36,6 +34,7 @@ using v8::Context;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
+using v8::Int32;
 using v8::Integer;
 using v8::Local;
 using v8::Number;
@@ -49,29 +48,24 @@ class ProcessWrap : public HandleWrap {
  public:
   static void Initialize(Local<Object> target,
                          Local<Value> unused,
-                         Local<Context> context) {
+                         Local<Context> context,
+                         void* priv) {
     Environment* env = Environment::GetCurrent(context);
     Local<FunctionTemplate> constructor = env->NewFunctionTemplate(New);
-    constructor->InstanceTemplate()->SetInternalFieldCount(1);
-    Local<String> processString =
-        FIXED_ONE_BYTE_STRING(env->isolate(), "Process");
-    constructor->SetClassName(processString);
+    constructor->InstanceTemplate()->SetInternalFieldCount(
+        ProcessWrap::kInternalFieldCount);
 
-    AsyncWrap::AddWrapMethods(env, constructor);
-
-    env->SetProtoMethod(constructor, "close", HandleWrap::Close);
+    constructor->Inherit(HandleWrap::GetConstructorTemplate(env));
 
     env->SetProtoMethod(constructor, "spawn", Spawn);
     env->SetProtoMethod(constructor, "kill", Kill);
 
-    env->SetProtoMethod(constructor, "ref", HandleWrap::Ref);
-    env->SetProtoMethod(constructor, "unref", HandleWrap::Unref);
-    env->SetProtoMethod(constructor, "hasRef", HandleWrap::HasRef);
-
-    target->Set(processString, constructor->GetFunction());
+    env->SetConstructorFunction(target, "Process", constructor);
   }
 
-  size_t self_size() const override { return sizeof(*this); }
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(ProcessWrap)
+  SET_SELF_SIZE(ProcessWrap)
 
  private:
   static void New(const FunctionCallbackInfo<Value>& args) {
@@ -89,6 +83,17 @@ class ProcessWrap : public HandleWrap {
                    reinterpret_cast<uv_handle_t*>(&process_),
                    AsyncWrap::PROVIDER_PROCESSWRAP) {
     MarkAsUninitialized();
+  }
+
+  static uv_stream_t* StreamForWrap(Environment* env, Local<Object> stdio) {
+    Local<String> handle_key = env->handle_string();
+    // This property has always been set by JS land if we are in this code path.
+    Local<Object> handle =
+        stdio->Get(env->context(), handle_key).ToLocalChecked().As<Object>();
+
+    uv_stream_t* stream = LibuvStreamWrap::From(env, handle)->stream();
+    CHECK_NOT_NULL(stream);
+    return stream;
   }
 
   static void ParseStdioOptions(Environment* env,
@@ -109,31 +114,25 @@ class ProcessWrap : public HandleWrap {
       Local<Value> type =
           stdio->Get(context, env->type_string()).ToLocalChecked();
 
-      if (type->Equals(env->ignore_string())) {
+      if (type->StrictEquals(env->ignore_string())) {
         options->stdio[i].flags = UV_IGNORE;
-      } else if (type->Equals(env->pipe_string())) {
+      } else if (type->StrictEquals(env->pipe_string())) {
         options->stdio[i].flags = static_cast<uv_stdio_flags>(
             UV_CREATE_PIPE | UV_READABLE_PIPE | UV_WRITABLE_PIPE);
-        Local<String> handle_key = env->handle_string();
-        Local<Object> handle =
-            stdio->Get(context, handle_key).ToLocalChecked().As<Object>();
-        CHECK(!handle.IsEmpty());
-        options->stdio[i].data.stream =
-            reinterpret_cast<uv_stream_t*>(
-                Unwrap<PipeWrap>(handle)->UVHandle());
-      } else if (type->Equals(env->wrap_string())) {
-        Local<String> handle_key = env->handle_string();
-        Local<Object> handle =
-            stdio->Get(context, handle_key).ToLocalChecked().As<Object>();
-        uv_stream_t* stream = HandleToStream(env, handle);
-        CHECK_NOT_NULL(stream);
-
+        options->stdio[i].data.stream = StreamForWrap(env, stdio);
+      } else if (type->StrictEquals(env->overlapped_string())) {
+        options->stdio[i].flags = static_cast<uv_stdio_flags>(
+            UV_CREATE_PIPE | UV_READABLE_PIPE | UV_WRITABLE_PIPE |
+            UV_OVERLAPPED_PIPE);
+        options->stdio[i].data.stream = StreamForWrap(env, stdio);
+      } else if (type->StrictEquals(env->wrap_string())) {
         options->stdio[i].flags = UV_INHERIT_STREAM;
-        options->stdio[i].data.stream = stream;
+        options->stdio[i].data.stream = StreamForWrap(env, stdio);
       } else {
         Local<String> fd_key = env->fd_string();
-        int fd = static_cast<int>(
-            stdio->Get(context, fd_key).ToLocalChecked()->IntegerValue());
+        Local<Value> fd_value = stdio->Get(context, fd_key).ToLocalChecked();
+        CHECK(fd_value->IsNumber());
+        int fd = static_cast<int>(fd_value.As<Integer>()->Value());
         options->stdio[i].flags = UV_INHERIT_FD;
         options->stdio[i].data.fd = fd;
       }
@@ -159,7 +158,7 @@ class ProcessWrap : public HandleWrap {
         js_options->Get(context, env->uid_string()).ToLocalChecked();
     if (!uid_v->IsUndefined() && !uid_v->IsNull()) {
       CHECK(uid_v->IsInt32());
-      const int32_t uid = uid_v->Int32Value(context).FromJust();
+      const int32_t uid = uid_v.As<Int32>()->Value();
       options.flags |= UV_PROCESS_SETUID;
       options.uid = static_cast<uv_uid_t>(uid);
     }
@@ -169,7 +168,7 @@ class ProcessWrap : public HandleWrap {
         js_options->Get(context, env->gid_string()).ToLocalChecked();
     if (!gid_v->IsUndefined() && !gid_v->IsNull()) {
       CHECK(gid_v->IsInt32());
-      const int32_t gid = gid_v->Int32Value(context).FromJust();
+      const int32_t gid = gid_v.As<Int32>()->Value();
       options.flags |= UV_PROCESS_SETGID;
       options.gid = static_cast<uv_gid_t>(gid);
     }
@@ -239,6 +238,10 @@ class ProcessWrap : public HandleWrap {
       options.flags |= UV_PROCESS_WINDOWS_HIDE;
     }
 
+    if (env->hide_console_windows()) {
+      options.flags |= UV_PROCESS_WINDOWS_HIDE_CONSOLE;
+    }
+
     // options.windows_verbatim_arguments
     Local<Value> wva_v =
         js_options->Get(context, env->windows_verbatim_arguments_string())
@@ -263,7 +266,7 @@ class ProcessWrap : public HandleWrap {
       CHECK_EQ(wrap->process_.data, wrap);
       wrap->object()->Set(context, env->pid_string(),
                           Integer::New(env->isolate(),
-                                       wrap->process_.pid)).FromJust();
+                                       wrap->process_.pid)).Check();
     }
 
     if (options.args) {
@@ -293,8 +296,7 @@ class ProcessWrap : public HandleWrap {
   static void OnExit(uv_process_t* handle,
                      int64_t exit_status,
                      int term_signal) {
-    ProcessWrap* wrap = static_cast<ProcessWrap*>(handle->data);
-    CHECK_NOT_NULL(wrap);
+    ProcessWrap* wrap = ContainerOf(&ProcessWrap::process_, handle);
     CHECK_EQ(&wrap->process_, handle);
 
     Environment* env = wrap->env();
@@ -316,4 +318,4 @@ class ProcessWrap : public HandleWrap {
 }  // anonymous namespace
 }  // namespace node
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(process_wrap, node::ProcessWrap::Initialize)
+NODE_MODULE_CONTEXT_AWARE_INTERNAL(process_wrap, node::ProcessWrap::Initialize)

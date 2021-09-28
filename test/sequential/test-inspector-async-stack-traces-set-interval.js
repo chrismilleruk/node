@@ -1,9 +1,7 @@
-// Flags: --expose-internals
 'use strict';
 const common = require('../common');
 common.skipIfInspectorDisabled();
 common.skipIf32Bits();
-common.crashOnUnhandledRejection();
 const { NodeInstance } = require('../common/inspector-helper');
 const assert = require('assert');
 
@@ -17,12 +15,12 @@ async function skipFirstBreakpoint(session) {
 
 async function checkAsyncStackTrace(session) {
   console.error('[test]', 'Verify basic properties of asyncStackTrace');
-  const paused = await session.waitForBreakOnLine(2, '[eval]');
+  const paused = await session.waitForBreakOnLine(0, '[eval]');
   assert(paused.params.asyncStackTrace,
          `${Object.keys(paused.params)} contains "asyncStackTrace" property`);
   assert(paused.params.asyncStackTrace.description, 'Timeout');
   assert(paused.params.asyncStackTrace.callFrames
-           .some((frame) => frame.functionName === 'Module._compile'));
+           .some((frame) => frame.url === 'node:internal/process/execution'));
 }
 
 async function runTests() {
@@ -35,7 +33,7 @@ async function runTests() {
       'params': { 'maxDepth': 10 } },
     { 'method': 'Debugger.setBlackboxPatterns',
       'params': { 'patterns': [] } },
-    { 'method': 'Runtime.runIfWaitingForDebugger' }
+    { 'method': 'Runtime.runIfWaitingForDebugger' },
   ]);
 
   await skipFirstBreakpoint(session);
@@ -46,4 +44,4 @@ async function runTests() {
   instance.kill();
 }
 
-runTests();
+runTests().then(common.mustCall());

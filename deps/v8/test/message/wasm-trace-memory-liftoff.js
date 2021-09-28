@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --no-stress-opt --expose-wasm --wasm-trace-memory --liftoff
+// Flags: --no-stress-opt --trace-wasm-memory --liftoff
+// Flags: --no-wasm-tier-up --experimental-wasm-simd
 
-load("test/message/wasm-trace-memory.js");
+// Force enable sse3 and sse4-1, since that will determine which execution tier
+// we use, and thus the expected output message will differ.
+d8.file.execute("test/message/wasm-trace-memory.js");

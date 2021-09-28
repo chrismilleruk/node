@@ -4,12 +4,11 @@
 
 #include <fstream>
 
-#include "src/v8.h"
-
+#include "src/init/v8.h"
 #include "src/interpreter/bytecode-array-iterator.h"
 #include "src/interpreter/bytecode-generator.h"
 #include "src/interpreter/interpreter.h"
-#include "src/objects-inl.h"
+#include "src/objects/objects-inl.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/interpreter/bytecode-expectations-printer.h"
 #include "test/cctest/test-feedback-vector.h"
@@ -22,6 +21,8 @@ namespace interpreter {
 #define STR(A) XSTR(A)
 
 #define UNIQUE_VAR() "var a" STR(__COUNTER__) " = 0;\n"
+
+#define LOAD_UNIQUE_PROPERTY() "  b.name" STR(__COUNTER__) ";\n"
 
 #define REPEAT_2(...) __VA_ARGS__ __VA_ARGS__
 #define REPEAT_4(...) REPEAT_2(__VA_ARGS__) REPEAT_2(__VA_ARGS__)
@@ -57,30 +58,46 @@ namespace interpreter {
 #define REPEAT_64_UNIQUE_VARS() REPEAT_32_UNIQUE_VARS() REPEAT_32_UNIQUE_VARS()
 #define REPEAT_128_UNIQUE_VARS() REPEAT_64_UNIQUE_VARS() REPEAT_64_UNIQUE_VARS()
 
-#define REPEAT_250_UNIQUE_VARS() \
+#define REPEAT_252_UNIQUE_VARS() \
   REPEAT_128_UNIQUE_VARS()       \
   REPEAT_64_UNIQUE_VARS()        \
   REPEAT_32_UNIQUE_VARS()        \
   REPEAT_16_UNIQUE_VARS()        \
   REPEAT_8_UNIQUE_VARS()         \
-  UNIQUE_VAR()                   \
-  UNIQUE_VAR()
+  REPEAT_4_UNIQUE_VARS()
+
+#define REPEAT_2_LOAD_UNIQUE_PROPERTY() \
+  LOAD_UNIQUE_PROPERTY() LOAD_UNIQUE_PROPERTY()
+#define REPEAT_4_LOAD_UNIQUE_PROPERTY() \
+  REPEAT_2_LOAD_UNIQUE_PROPERTY() REPEAT_2_LOAD_UNIQUE_PROPERTY()
+#define REPEAT_8_LOAD_UNIQUE_PROPERTY() \
+  REPEAT_4_LOAD_UNIQUE_PROPERTY() REPEAT_4_LOAD_UNIQUE_PROPERTY()
+#define REPEAT_16_LOAD_UNIQUE_PROPERTY() \
+  REPEAT_8_LOAD_UNIQUE_PROPERTY() REPEAT_8_LOAD_UNIQUE_PROPERTY()
+#define REPEAT_32_LOAD_UNIQUE_PROPERTY() \
+  REPEAT_16_LOAD_UNIQUE_PROPERTY() REPEAT_16_LOAD_UNIQUE_PROPERTY()
+#define REPEAT_64_LOAD_UNIQUE_PROPERTY() \
+  REPEAT_32_LOAD_UNIQUE_PROPERTY() REPEAT_32_LOAD_UNIQUE_PROPERTY()
+#define REPEAT_128_LOAD_UNIQUE_PROPERTY() \
+  REPEAT_64_LOAD_UNIQUE_PROPERTY() REPEAT_64_LOAD_UNIQUE_PROPERTY()
 
 static const char* kGoldenFileDirectory =
     "test/cctest/interpreter/bytecode_expectations/";
 
-class InitializedIgnitionHandleScope : public InitializedHandleScope {
+class V8_NODISCARD InitializedIgnitionHandleScope
+    : public InitializedHandleScope {
  public:
   InitializedIgnitionHandleScope() {
     i::FLAG_always_opt = false;
     i::FLAG_allow_natives_syntax = true;
+    i::FLAG_enable_lazy_source_positions = false;
   }
 };
 
-void SkipGoldenFileHeader(std::istream& stream) {  // NOLINT
+void SkipGoldenFileHeader(std::istream* stream) {
   std::string line;
   int separators_seen = 0;
-  while (std::getline(stream, line)) {
+  while (std::getline(*stream, line)) {
     if (line == "---") separators_seen += 1;
     if (separators_seen == 2) return;
   }
@@ -89,7 +106,7 @@ void SkipGoldenFileHeader(std::istream& stream) {  // NOLINT
 std::string LoadGolden(const std::string& golden_filename) {
   std::ifstream expected_file((kGoldenFileDirectory + golden_filename).c_str());
   CHECK(expected_file.is_open());
-  SkipGoldenFileHeader(expected_file);
+  SkipGoldenFileHeader(&expected_file);
   std::ostringstream expected_stream;
   // Restore the first separator, which was consumed by SkipGoldenFileHeader
   expected_stream << "---\n" << expected_file.rdbuf();
@@ -107,9 +124,30 @@ std::string BuildActual(const BytecodeExpectationsPrinter& printer,
     if (prologue) source_code += prologue;
     source_code += snippet;
     if (epilogue) source_code += epilogue;
-    printer.PrintExpectation(actual_stream, source_code);
+    printer.PrintExpectation(&actual_stream, source_code);
   }
   return actual_stream.str();
+}
+
+// inplace left trim
+static inline void ltrim(std::string* str) {
+  str->erase(str->begin(),
+             std::find_if(str->begin(), str->end(),
+                          [](unsigned char ch) { return !std::isspace(ch); }));
+}
+
+// inplace right trim
+static inline void rtrim(std::string* str) {
+  str->erase(std::find_if(str->rbegin(), str->rend(),
+                          [](unsigned char ch) { return !std::isspace(ch); })
+                 .base(),
+             str->end());
+}
+
+static inline std::string trim(std::string* str) {
+  ltrim(str);
+  rtrim(str);
+  return *str;
 }
 
 bool CompareTexts(const std::string& generated, const std::string& expected) {
@@ -119,13 +157,14 @@ bool CompareTexts(const std::string& generated, const std::string& expected) {
   std::string expected_line;
   // Line number does not include golden file header.
   int line_number = 0;
+  bool strings_match = true;
 
   do {
     std::getline(generated_stream, generated_line);
     std::getline(expected_stream, expected_line);
 
     if (!generated_stream.good() && !expected_stream.good()) {
-      return true;
+      return strings_match;
     }
 
     if (!generated_stream.good()) {
@@ -140,11 +179,11 @@ bool CompareTexts(const std::string& generated, const std::string& expected) {
       return false;
     }
 
-    if (generated_line != expected_line) {
+    if (trim(&generated_line) != trim(&expected_line)) {
       std::cerr << "Inputs differ at line " << line_number << "\n";
       std::cerr << "  Generated: '" << generated_line << "'\n";
       std::cerr << "  Expected:  '" << expected_line << "'\n";
-      return false;
+      strings_match = false;
     }
     line_number++;
   } while (true);
@@ -375,9 +414,8 @@ TEST(PropertyLoads) {
     "f({\"-124\" : \"test\", name : 123 })",
 
     "function f(a) {\n"
-    "  var b;\n"
-    "  b = a.name;\n"
-    REPEAT_127("  b = a.name;\n")
+    "  var b = {};\n"
+    REPEAT_128_LOAD_UNIQUE_PROPERTY()
     "  return a.name;\n"
     "}\n"
     "f({name : \"test\"})\n",
@@ -393,6 +431,110 @@ TEST(PropertyLoads) {
 
   CHECK(CompareTexts(BuildActual(printer, snippets),
                      LoadGolden("PropertyLoads.golden")));
+}
+
+TEST(PropertyLoadStore) {
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+  printer.set_wrap(false);
+  printer.set_top_level(true);
+
+  const char* snippets[] = {
+      R"(
+      l = {
+        'aa': 1.1,
+        'bb': 2.2
+      };
+
+      v = l['aa'] + l['bb'];
+      l['bb'] = 7;
+      l['aa'] = l['bb'];
+      )",
+
+      R"(
+      l = {
+        'cc': 3.1,
+        'dd': 4.2
+      };
+      if (l['cc'] < 3) {
+        l['cc'] = 3;
+      } else {
+        l['dd'] = 3;
+      }
+      )",
+  };
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("PropertyLoadStore.golden")));
+}
+
+TEST(IIFE) {
+  InitializedIgnitionHandleScope scope;
+  v8::Isolate* isolate = CcTest::isolate();
+  BytecodeExpectationsPrinter printer(isolate);
+  printer.set_wrap(false);
+  printer.set_top_level(true);
+  printer.set_print_callee(true);
+
+  const char* snippets[] = {
+      R"(
+      (function() {
+        l = {};
+        l.a = 2;
+        l.b = l.a;
+        return arguments.callee;
+      })();
+    )",
+      R"(
+      (function() {
+        l = {
+          'a': 4.3,
+          'b': 3.4
+        };
+        if (l.a < 3) {
+          l.a = 3;
+        } else {
+          l.a = l.b;
+        }
+        return arguments.callee;
+      })();
+    )",
+      R"(
+      this.f0 = function() {};
+      this.f1 = function(a) {};
+      this.f2 = function(a, b) {};
+      this.f3 = function(a, b, c) {};
+      this.f4 = function(a, b, c, d) {};
+      this.f5 = function(a, b, c, d, e) {};
+      (function() {
+        this.f0();
+        this.f1(1);
+        this.f2(1, 2);
+        this.f3(1, 2, 3);
+        this.f4(1, 2, 3, 4);
+        this.f5(1, 2, 3, 4, 5);
+        return arguments.callee;
+      })();
+    )",
+      R"(
+      function f0() {}
+      function f1(a) {}
+      function f2(a, b) {}
+      function f3(a, b, c) {}
+      function f4(a, b, c, d) {}
+      function f5(a, b, c, d, e) {}
+      (function() {
+        f0();
+        f1(1);
+        f2(1, 2);
+        f3(1, 2, 3);
+        f4(1, 2, 3, 4);
+        f5(1, 2, 3, 4, 5);
+        return arguments.callee;
+      })();
+    )",
+  };
+  CHECK(
+      CompareTexts(BuildActual(printer, snippets), LoadGolden("IIFE.golden")));
 }
 
 TEST(PropertyStores) {
@@ -425,7 +567,8 @@ TEST(PropertyStores) {
 
     "function f(a) {\n"
     "  a.name = 1;\n"
-    REPEAT_127("  a.name = 1;\n")
+    "  var b = {};\n"
+    REPEAT_128_LOAD_UNIQUE_PROPERTY()
     "  a.name = 2;\n"
     "}\n"
     "f({name : \"test\"})\n",
@@ -433,7 +576,8 @@ TEST(PropertyStores) {
     "function f(a) {\n"
     " 'use strict';\n"
     "  a.name = 1;\n"
-    REPEAT_127("  a.name = 1;\n")
+    "  var b = {};\n"
+    REPEAT_128_LOAD_UNIQUE_PROPERTY()
     "  a.name = 2;\n"
     "}\n"
     "f({name : \"test\"})\n",
@@ -477,9 +621,10 @@ TEST(PropertyCall) {
       "f(" FUNC_ARG ", 1)",
 
       "function f(a) {\n"
-      " a.func;\n"              //
-      REPEAT_127(" a.func;\n")  //
-      " return a.func(); }\n"
+      "  var b = {};\n"
+      REPEAT_128_LOAD_UNIQUE_PROPERTY()
+      "  a.func;\n"              //
+      "  return a.func(); }\n"
       "f(" FUNC_ARG ")",
 
       "function f(a) { return a.func(1).func(2).func(3); }\n"
@@ -510,9 +655,9 @@ TEST(LoadGlobal) {
     "f()",
 
     "a = 1;\n"
-    "function f(b) {\n"
-    "  b.name;\n"
-    REPEAT_127("  b.name;\n")
+    "function f(c) {\n"
+    "  var b = {};\n"
+    REPEAT_128_LOAD_UNIQUE_PROPERTY()
     "  return a;\n"
     "}\n"
     "f({name: 1});\n",
@@ -545,18 +690,18 @@ TEST(StoreGlobal) {
     "f();\n",
 
     "a = 1;\n"
-    "function f(b) {\n"
-    "  b.name;\n"
-    REPEAT_127("  b.name;\n")
+    "function f(c) {\n"
+    "  var b = {};\n"
+    REPEAT_128_LOAD_UNIQUE_PROPERTY()
     "  a = 2;\n"
     "}\n"
     "f({name: 1});\n",
 
     "a = 1;\n"
-    "function f(b) {\n"
+    "function f(c) {\n"
     "  'use strict';\n"
-    "  b.name;\n"
-    REPEAT_127("  b.name;\n")
+    "  var b = {};\n"
+    REPEAT_128_LOAD_UNIQUE_PROPERTY()
     "  a = 2;\n"
     "}\n"
     "f({name: 1});\n",
@@ -1096,6 +1241,8 @@ TEST(Delete) {
       "return delete a[1];\n",
 
       "return delete 'test';\n",
+
+      "return delete this;\n",
   };
 
   CHECK(CompareTexts(BuildActual(printer, snippets),
@@ -1183,6 +1330,12 @@ TEST(ArrayLiterals) {
       "return [ [ 1, 2 ], [ 3 ] ];\n",
 
       "var a = 1; return [ [ a, 2 ], [ a + 2 ] ];\n",
+
+      "var a = [ 1, 2 ]; return [ ...a ];\n",
+
+      "var a = [ 1, 2 ]; return [ 0, ...a ];\n",
+
+      "var a = [ 1, 2 ]; return [ ...a, 3 ];\n",
   };
 
   CHECK(CompareTexts(BuildActual(printer, snippets),
@@ -1324,10 +1477,10 @@ TEST(CallNew) {
 }
 
 TEST(ContextVariables) {
-  // The wide check below relies on MIN_CONTEXT_SLOTS + 3 + 249 == 256, if this
+  // The wide check below relies on MIN_CONTEXT_SLOTS + 3 + 250 == 256, if this
   // ever changes, the REPEAT_XXX should be changed to output the correct number
   // of unique variables to trigger the wide slot load / store.
-  STATIC_ASSERT(Context::MIN_CONTEXT_SLOTS + 3 + 249 == 256);
+  STATIC_ASSERT(Context::MIN_CONTEXT_EXTENDED_SLOTS + 3 + 250 == 256);
 
   InitializedIgnitionHandleScope scope;
   BytecodeExpectationsPrinter printer(CcTest::isolate());
@@ -1345,7 +1498,7 @@ TEST(ContextVariables) {
     "{ let b = 2; return function() { a + b; }; }\n",
 
     "'use strict';\n"
-    REPEAT_250_UNIQUE_VARS()
+    REPEAT_252_UNIQUE_VARS()
     "eval();\n"
     "var b = 100;\n"
     "return b\n",
@@ -1863,6 +2016,33 @@ TEST(AssignmentsInBinaryExpression) {
                      LoadGolden("AssignmentsInBinaryExpression.golden")));
 }
 
+TEST(DestructuringAssignment) {
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+  const char* snippets[] = {
+      "var x, a = [0,1,2,3];\n"
+      "[x] = a;\n",
+
+      "var x, y, a = [0,1,2,3];\n"
+      "[,x,...y] = a;\n",
+
+      "var x={}, y, a = [0];\n"
+      "[x.foo,y=4] = a;\n",
+
+      "var x, a = {x:1};\n"
+      "({x} = a);\n",
+
+      "var x={}, a = {y:1};\n"
+      "({y:x.foo} = a);\n",
+
+      "var x, a = {y:1, w:2, v:3};\n"
+      "({x=0,...y} = a);\n",
+  };
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("DestructuringAssignment.golden")));
+}
+
 TEST(Eval) {
   InitializedIgnitionHandleScope scope;
   BytecodeExpectationsPrinter printer(CcTest::isolate());
@@ -1982,7 +2162,7 @@ TEST(WideRegisters) {
   // Prepare prologue that creates frame for lots of registers.
   std::ostringstream os;
   for (size_t i = 0; i < 157; ++i) {
-    os << "var x" << i << ";\n";
+    os << "var x" << i << " = 0;\n";
   }
   std::string prologue(os.str());
 
@@ -2095,26 +2275,6 @@ TEST(LetVariableContextSlot) {
 
   CHECK(CompareTexts(BuildActual(printer, snippets),
                      LoadGolden("LetVariableContextSlot.golden")));
-}
-
-TEST(DoExpression) {
-  bool old_flag = FLAG_harmony_do_expressions;
-  FLAG_harmony_do_expressions = true;
-
-  InitializedIgnitionHandleScope scope;
-  BytecodeExpectationsPrinter printer(CcTest::isolate());
-  const char* snippets[] = {
-      "var a = do { }; return a;\n",
-
-      "var a = do { var x = 100; }; return a;\n",
-
-      "while(true) { var a = 10; a = do { ++a; break; }; a = 20; }\n",
-  };
-
-  CHECK(CompareTexts(BuildActual(printer, snippets),
-                     LoadGolden("DoExpression.golden")));
-
-  FLAG_harmony_do_expressions = old_flag;
 }
 
 TEST(WithStatement) {
@@ -2231,8 +2391,6 @@ TEST(ClassAndSuperClass) {
 }
 
 TEST(PublicClassFields) {
-  bool old_flag = i::FLAG_harmony_public_fields;
-  i::FLAG_harmony_public_fields = true;
   InitializedIgnitionHandleScope scope;
   BytecodeExpectationsPrinter printer(CcTest::isolate());
 
@@ -2281,12 +2439,9 @@ TEST(PublicClassFields) {
 
   CHECK(CompareTexts(BuildActual(printer, snippets),
                      LoadGolden("PublicClassFields.golden")));
-  i::FLAG_harmony_public_fields = old_flag;
 }
 
 TEST(PrivateClassFields) {
-  bool old_flag = i::FLAG_harmony_private_fields;
-  i::FLAG_harmony_private_fields = true;
   InitializedIgnitionHandleScope scope;
   BytecodeExpectationsPrinter printer(CcTest::isolate());
 
@@ -2341,14 +2496,345 @@ TEST(PrivateClassFields) {
 
   CHECK(CompareTexts(BuildActual(printer, snippets),
                      LoadGolden("PrivateClassFields.golden")));
-  i::FLAG_harmony_private_fields = old_flag;
+}
+
+TEST(PrivateClassFieldAccess) {
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+  printer.set_wrap(false);
+  printer.set_test_function_name("test");
+
+  const char* snippets[] = {
+      "class A {\n"
+      "  #a;\n"
+      "  #b;\n"
+      "  constructor() {\n"
+      "    this.#a = this.#b;\n"
+      "  }\n"
+      "}\n"
+      "\n"
+      "var test = A;\n"
+      "new test;\n",
+
+      "class B {\n"
+      "  #a;\n"
+      "  #b;\n"
+      "  constructor() {\n"
+      "    this.#a = this.#b;\n"
+      "  }\n"
+      "  force(str) {\n"
+      "    eval(str);\n"
+      "  }\n"
+      "}\n"
+      "\n"
+      "var test = B;\n"
+      "new test;\n"};
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("PrivateClassFieldAccess.golden")));
+}
+
+TEST(PrivateMethodDeclaration) {
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+
+  const char* snippets[] = {
+      "{\n"
+      "  class A {\n"
+      "    #a() { return 1; }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class D {\n"
+      "    #d() { return 1; }\n"
+      "  }\n"
+      "  class E extends D {\n"
+      "    #e() { return 2; }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class A { foo() {} }\n"
+      "  class C extends A {\n"
+      "    #m() { return super.foo; }\n"
+      "  }\n"
+      "}\n"};
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("PrivateMethodDeclaration.golden")));
+}
+
+TEST(PrivateMethodAccess) {
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+  printer.set_wrap(false);
+  printer.set_test_function_name("test");
+
+  const char* snippets[] = {
+      "class A {\n"
+      "  #a() { return 1; }\n"
+      "  constructor() { return this.#a(); }\n"
+      "}\n"
+      "\n"
+      "var test = A;\n"
+      "new A;\n",
+
+      "class B {\n"
+      "  #b() { return 1; }\n"
+      "  constructor() { this.#b = 1; }\n"
+      "}\n"
+      "\n"
+      "var test = B;\n"
+      "new test;\n",
+
+      "class C {\n"
+      "  #c() { return 1; }\n"
+      "  constructor() { this.#c++; }\n"
+      "}\n"
+      "\n"
+      "var test = C;\n"
+      "new test;\n",
+
+      "class D {\n"
+      "  #d() { return 1; }\n"
+      "  constructor() { (() => this)().#d(); }\n"
+      "}\n"
+      "\n"
+      "var test = D;\n"
+      "new test;\n"};
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("PrivateMethodAccess.golden")));
+}
+
+TEST(PrivateAccessorAccess) {
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+  printer.set_wrap(false);
+  printer.set_test_function_name("test");
+
+  const char* snippets[] = {
+      "class A {\n"
+      "  get #a() { return 1; }\n"
+      "  set #a(val) { }\n"
+      "\n"
+      "  constructor() {\n"
+      "    this.#a++;\n"
+      "    this.#a = 1;\n"
+      "    return this.#a;\n"
+      "  }\n"
+      "}\n"
+      "var test = A;\n"
+      "new test;\n",
+
+      "class B {\n"
+      "  get #b() { return 1; }\n"
+      "  constructor() { this.#b++; }\n"
+      "}\n"
+      "var test = B;\n"
+      "new test;\n",
+
+      "class C {\n"
+      "  set #c(val) { }\n"
+      "  constructor() { this.#c++; }\n"
+      "}\n"
+      "var test = C;\n"
+      "new test;\n",
+
+      "class D {\n"
+      "  get #d() { return 1; }\n"
+      "  constructor() { this.#d = 1; }\n"
+      "}\n"
+      "var test = D;\n"
+      "new test;\n",
+
+      "class E {\n"
+      "  set #e(val) { }\n"
+      "  constructor() { this.#e; }\n"
+      "}\n"
+      "var test = E;\n"
+      "new test;\n"};
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("PrivateAccessorAccess.golden")));
+}
+
+TEST(StaticPrivateMethodDeclaration) {
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+
+  const char* snippets[] = {
+      "{\n"
+      "  class A {\n"
+      "    static #a() { return 1; }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class A {\n"
+      "    static get #a() { return 1; }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class A {\n"
+      "    static set #a(val) { }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class A {\n"
+      "    static get #a() { return 1; }\n"
+      "    static set #a(val) { }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class A {\n"
+      "    static #a() { }\n"
+      "    #b() { }\n"
+      "  }\n"
+      "}\n"};
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("StaticPrivateMethodDeclaration.golden")));
+}
+
+TEST(StaticPrivateMethodAccess) {
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+  printer.set_wrap(false);
+  printer.set_test_function_name("test");
+
+  const char* snippets[] = {
+      "class A {\n"
+      "  static #a() { return 1; }\n"
+      "  static test() { return this.#a(); }\n"
+      "}\n"
+      "\n"
+      "var test = A.test;\n"
+      "test();\n",
+
+      "class B {\n"
+      "  static #b() { return 1; }\n"
+      "  static test() { this.#b = 1; }\n"
+      "}\n"
+      "\n"
+      "var test = B.test;\n"
+      "test();\n",
+
+      "class C {\n"
+      "  static #c() { return 1; }\n"
+      "  static test() { this.#c++; }\n"
+      "}\n"
+      "\n"
+      "var test = C.test;\n"
+      "test();\n",
+
+      "class D {\n"
+      "  static get #d() { return 1; }\n"
+      "  static set #d(val) { }\n"
+      "\n"
+      "  static test() {\n"
+      "    this.#d++;\n"
+      "    this.#d = 1;\n"
+      "    return this.#d;\n"
+      "  }\n"
+      "}\n"
+      "\n"
+      "var test = D.test;\n"
+      "test();\n",
+
+      "class E {\n"
+      "  static get #e() { return 1; }\n"
+      "  static test() { this.#e++; }\n"
+      "}\n"
+      "var test = E.test;\n"
+      "test();\n",
+
+      "class F {\n"
+      "  static set #f(val) { }\n"
+      "  static test() { this.#f++; }\n"
+      "}\n"
+      "var test = F.test;\n"
+      "test();\n",
+
+      "class G {\n"
+      "  static get #d() { return 1; }\n"
+      "  static test() { this.#d = 1; }\n"
+      "}\n"
+      "var test = G.test;\n"
+      "test();\n",
+
+      "class H {\n"
+      "  set #h(val) { }\n"
+      "  static test() { this.#h; }\n"
+      "}\n"
+      "var test = H.test;\n"
+      "test();\n"};
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("StaticPrivateMethodAccess.golden")));
+}
+
+TEST(PrivateAccessorDeclaration) {
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+
+  const char* snippets[] = {
+      "{\n"
+      "  class A {\n"
+      "    get #a() { return 1; }\n"
+      "    set #a(val) { }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class B {\n"
+      "    get #b() { return 1; }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class C {\n"
+      "    set #c(val) { }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class D {\n"
+      "    get #d() { return 1; }\n"
+      "    set #d(val) { }\n"
+      "  }\n"
+      "\n"
+      "  class E extends D {\n"
+      "    get #e() { return 2; }\n"
+      "    set #e(val) { }\n"
+      "  }\n"
+      "}\n",
+
+      "{\n"
+      "  class A { foo() {} }\n"
+      "  class C extends A {\n"
+      "    get #a() { return super.foo; }\n"
+      "  }\n"
+      "  new C();\n"
+      "}\n",
+
+      "{\n"
+      "  class A { foo(val) {} }\n"
+      "  class C extends A {\n"
+      "    set #a(val) { super.foo(val); }\n"
+      "  }\n"
+      "  new C();\n"
+      "}\n"};
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("PrivateAccessorDeclaration.golden")));
 }
 
 TEST(StaticClassFields) {
-  bool old_flag = i::FLAG_harmony_public_fields;
-  bool old_static_flag = i::FLAG_harmony_static_fields;
-  i::FLAG_harmony_public_fields = true;
-  i::FLAG_harmony_static_fields = true;
   InitializedIgnitionHandleScope scope;
   BytecodeExpectationsPrinter printer(CcTest::isolate());
 
@@ -2407,8 +2893,6 @@ TEST(StaticClassFields) {
 
   CHECK(CompareTexts(BuildActual(printer, snippets),
                      LoadGolden("StaticClassFields.golden")));
-  i::FLAG_harmony_public_fields = old_flag;
-  i::FLAG_harmony_static_fields = old_static_flag;
 }
 
 TEST(Generators) {
@@ -2503,6 +2987,35 @@ TEST(Modules) {
 
   CHECK(CompareTexts(BuildActual(printer, snippets),
                      LoadGolden("Modules.golden")));
+}
+
+TEST(AsyncModules) {
+  bool previous_top_level_await_flag = i::FLAG_harmony_top_level_await;
+  i::FLAG_harmony_top_level_await = true;
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+  printer.set_wrap(false);
+  printer.set_module(true);
+  printer.set_top_level(true);
+
+  const char* snippets[] = {
+      "await 42;\n",
+
+      "await import(\"foo\");\n",
+
+      "await 42;\n"
+      "async function foo() {\n"
+      "  await 42;\n"
+      "}\n"
+      "foo();\n",
+
+      "import * as foo from \"bar\";\n"
+      "await import(\"goo\");\n",
+  };
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("AsyncModules.golden")));
+  i::FLAG_harmony_top_level_await = previous_top_level_await_flag;
 }
 
 TEST(SuperCallAndSpread) {
@@ -2802,7 +3315,15 @@ TEST(TemplateLiterals) {
 #undef REPEAT_32_UNIQUE_VARS
 #undef REPEAT_64_UNIQUE_VARS
 #undef REPEAT_128_UNIQUE_VARS
-#undef REPEAT_250_UNIQUE_VARS
+#undef REPEAT_252_UNIQUE_VARS
+#undef LOAD_UNIQUE_PROPERTY
+#undef REPEAT_2_LOAD_UNIQUE_PROPERTY
+#undef REPEAT_4_LOAD_UNIQUE_PROPERTY
+#undef REPEAT_8_LOAD_UNIQUE_PROPERTY
+#undef REPEAT_16_LOAD_UNIQUE_PROPERTY
+#undef REPEAT_32_LOAD_UNIQUE_PROPERTY
+#undef REPEAT_64_LOAD_UNIQUE_PROPERTY
+#undef REPEAT_128_LOAD_UNIQUE_PROPERTY
 #undef FUNC_ARG
 
 }  // namespace interpreter

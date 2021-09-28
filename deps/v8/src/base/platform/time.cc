@@ -19,13 +19,16 @@
 #include <ostream>
 
 #if V8_OS_WIN
-#include "src/base/atomicops.h"
 #include "src/base/lazy-instance.h"
 #include "src/base/win32-headers.h"
 #endif
 #include "src/base/cpu.h"
 #include "src/base/logging.h"
 #include "src/base/platform/platform.h"
+
+#if V8_OS_STARBOARD
+#include "starboard/time.h"
+#endif
 
 namespace {
 
@@ -40,13 +43,23 @@ int64_t ComputeThreadTicks() {
       &thread_info_count);
   CHECK_EQ(kr, KERN_SUCCESS);
 
-  v8::base::CheckedNumeric<int64_t> absolute_micros(
-      thread_info_data.user_time.seconds +
-      thread_info_data.system_time.seconds);
-  absolute_micros *= v8::base::Time::kMicrosecondsPerSecond;
-  absolute_micros += (thread_info_data.user_time.microseconds +
-                      thread_info_data.system_time.microseconds);
-  return absolute_micros.ValueOrDie();
+  // We can add the seconds into a {int64_t} without overflow.
+  CHECK_LE(thread_info_data.user_time.seconds,
+           std::numeric_limits<int64_t>::max() -
+               thread_info_data.system_time.seconds);
+  int64_t seconds =
+      thread_info_data.user_time.seconds + thread_info_data.system_time.seconds;
+  // Multiplying the seconds by {kMicrosecondsPerSecond}, and adding something
+  // in [0, 2 * kMicrosecondsPerSecond) must result in a valid {int64_t}.
+  static constexpr int64_t kSecondsLimit =
+      (std::numeric_limits<int64_t>::max() /
+       v8::base::Time::kMicrosecondsPerSecond) -
+      2;
+  CHECK_GT(kSecondsLimit, seconds);
+  int64_t micros = seconds * v8::base::Time::kMicrosecondsPerSecond;
+  micros += (thread_info_data.user_time.microseconds +
+             thread_info_data.system_time.microseconds);
+  return micros;
 }
 #elif V8_OS_POSIX
 // Helper function to get results from clock_gettime() and convert to a
@@ -61,6 +74,9 @@ V8_INLINE int64_t ClockNow(clockid_t clk_id) {
 #if defined(V8_OS_AIX)
   thread_cputime_t tc;
   if (clk_id == CLOCK_THREAD_CPUTIME_ID) {
+#if defined(__PASE__)  // CLOCK_THREAD_CPUTIME_ID clock not supported on IBMi
+    return 0;
+#endif
     if (thread_cputime(-1, &tc) != 0) {
       UNREACHABLE();
     }
@@ -70,8 +86,14 @@ V8_INLINE int64_t ClockNow(clockid_t clk_id) {
   if (clock_gettime(clk_id, &ts) != 0) {
     UNREACHABLE();
   }
-  v8::base::internal::CheckedNumeric<int64_t> result(ts.tv_sec);
-  result *= v8::base::Time::kMicrosecondsPerSecond;
+  // Multiplying the seconds by {kMicrosecondsPerSecond}, and adding something
+  // in [0, kMicrosecondsPerSecond) must result in a valid {int64_t}.
+  static constexpr int64_t kSecondsLimit =
+      (std::numeric_limits<int64_t>::max() /
+       v8::base::Time::kMicrosecondsPerSecond) -
+      1;
+  CHECK_GT(kSecondsLimit, ts.tv_sec);
+  int64_t result = int64_t{ts.tv_sec} * v8::base::Time::kMicrosecondsPerSecond;
 #if defined(V8_OS_AIX)
   if (clk_id == CLOCK_THREAD_CPUTIME_ID) {
     result += (tc.stime / v8::base::Time::kNanosecondsPerMicrosecond);
@@ -81,18 +103,32 @@ V8_INLINE int64_t ClockNow(clockid_t clk_id) {
 #else
   result += (ts.tv_nsec / v8::base::Time::kNanosecondsPerMicrosecond);
 #endif
-  return result.ValueOrDie();
+  return result;
 #else  // Monotonic clock not supported.
   return 0;
 #endif
 }
-#elif V8_OS_WIN
-V8_INLINE bool IsQPCReliable() {
-  v8::base::CPU cpu;
-  // On Athlon X2 CPUs (e.g. model 15) QueryPerformanceCounter is unreliable.
-  return strcmp(cpu.vendor(), "AuthenticAMD") == 0 && cpu.family() == 15;
+
+V8_INLINE bool IsHighResolutionTimer(clockid_t clk_id) {
+  // Limit duration of timer resolution measurement to 100 ms. If we cannot
+  // measure timer resoltuion within this time, we assume a low resolution
+  // timer.
+  int64_t end =
+      ClockNow(clk_id) + 100 * v8::base::Time::kMicrosecondsPerMillisecond;
+  int64_t start, delta;
+  do {
+    start = ClockNow(clk_id);
+    // Loop until we can detect that the clock has changed. Non-HighRes timers
+    // will increment in chunks, i.e. 15ms. By spinning until we see a clock
+    // change, we detect the minimum time between measurements.
+    do {
+      delta = ClockNow(clk_id) - start;
+    } while (delta == 0);
+  } while (delta > 1 && start < end);
+  return delta <= 1;
 }
 
+#elif V8_OS_WIN
 // Returns the current value of the performance counter.
 V8_INLINE uint64_t QPCNowRaw() {
   LARGE_INTEGER perf_counter_now = {};
@@ -111,36 +147,6 @@ V8_INLINE uint64_t QPCNowRaw() {
 
 namespace v8 {
 namespace base {
-
-TimeDelta TimeDelta::FromDays(int days) {
-  return TimeDelta(days * Time::kMicrosecondsPerDay);
-}
-
-
-TimeDelta TimeDelta::FromHours(int hours) {
-  return TimeDelta(hours * Time::kMicrosecondsPerHour);
-}
-
-
-TimeDelta TimeDelta::FromMinutes(int minutes) {
-  return TimeDelta(minutes * Time::kMicrosecondsPerMinute);
-}
-
-
-TimeDelta TimeDelta::FromSeconds(int64_t seconds) {
-  return TimeDelta(seconds * Time::kMicrosecondsPerSecond);
-}
-
-
-TimeDelta TimeDelta::FromMilliseconds(int64_t milliseconds) {
-  return TimeDelta(milliseconds * Time::kMicrosecondsPerMillisecond);
-}
-
-
-TimeDelta TimeDelta::FromNanoseconds(int64_t nanoseconds) {
-  return TimeDelta(nanoseconds / Time::kNanosecondsPerMicrosecond);
-}
-
 
 int TimeDelta::InDays() const {
   if (IsMax()) {
@@ -282,7 +288,7 @@ class Clock final {
     // Time between resampling the un-granular clock for this API (1 minute).
     const TimeDelta kMaxElapsedTime = TimeDelta::FromMinutes(1);
 
-    LockGuard<Mutex> lock_guard(&mutex_);
+    MutexGuard lock_guard(&mutex_);
 
     // Determine current time and ticks.
     TimeTicks ticks = GetSystemTicks();
@@ -301,7 +307,7 @@ class Clock final {
   }
 
   Time NowFromSystemTime() {
-    LockGuard<Mutex> lock_guard(&mutex_);
+    MutexGuard lock_guard(&mutex_);
     initial_ticks_ = GetSystemTicks();
     initial_time_ = GetSystemTime();
     return initial_time_;
@@ -323,21 +329,13 @@ class Clock final {
   Mutex mutex_;
 };
 
+namespace {
+DEFINE_LAZY_LEAKY_OBJECT_GETTER(Clock, GetClock)
+}  // namespace
 
-static LazyStaticInstance<Clock, DefaultConstructTrait<Clock>,
-                          ThreadSafeInitOnceTrait>::type clock =
-    LAZY_STATIC_INSTANCE_INITIALIZER;
+Time Time::Now() { return GetClock()->Now(); }
 
-
-Time Time::Now() {
-  return clock.Pointer()->Now();
-}
-
-
-Time Time::NowFromSystemTime() {
-  return clock.Pointer()->NowFromSystemTime();
-}
-
+Time Time::NowFromSystemTime() { return GetClock()->NowFromSystemTime(); }
 
 // Time between windows epoch and standard epoch.
 static const int64_t kTimeToEpochInMicroseconds = int64_t{11644473600000000};
@@ -455,7 +453,13 @@ struct timeval Time::ToTimeval() const {
   return tv;
 }
 
-#endif  // V8_OS_WIN
+#elif V8_OS_STARBOARD
+
+Time Time::Now() { return Time(SbTimeToPosix(SbTimeGetNow())); }
+
+Time Time::NowFromSystemTime() { return Now(); }
+
+#endif  // V8_OS_STARBOARD
 
 // static
 TimeTicks TimeTicks::HighResolutionNow() {
@@ -511,7 +515,7 @@ DWORD (*g_tick_function)(void) = &timeGetTimeWrapper;
 // "rollover" counter.
 union LastTimeAndRolloversState {
   // The state as a single 32-bit opaque value.
-  base::Atomic32 as_opaque_32;
+  int32_t as_opaque_32;
 
   // The state as usable values.
   struct {
@@ -527,7 +531,7 @@ union LastTimeAndRolloversState {
     uint16_t rollovers;
   } as_values;
 };
-base::Atomic32 g_last_time_and_rollovers = 0;
+std::atomic<int32_t> g_last_time_and_rollovers{0};
 static_assert(sizeof(LastTimeAndRolloversState) <=
                   sizeof(g_last_time_and_rollovers),
               "LastTimeAndRolloversState does not fit in a single atomic word");
@@ -541,12 +545,12 @@ TimeTicks RolloverProtectedNow() {
   LastTimeAndRolloversState state;
   DWORD now;  // DWORD is always unsigned 32 bits.
 
+  // Fetch the "now" and "last" tick values, updating "last" with "now" and
+  // incrementing the "rollovers" counter if the tick-value has wrapped back
+  // around. Atomic operations ensure that both "last" and "rollovers" are
+  // always updated together.
+  int32_t original = g_last_time_and_rollovers.load(std::memory_order_acquire);
   while (true) {
-    // Fetch the "now" and "last" tick values, updating "last" with "now" and
-    // incrementing the "rollovers" counter if the tick-value has wrapped back
-    // around. Atomic operations ensure that both "last" and "rollovers" are
-    // always updated together.
-    int32_t original = base::Acquire_Load(&g_last_time_and_rollovers);
     state.as_opaque_32 = original;
     now = g_tick_function();
     uint8_t now_8 = static_cast<uint8_t>(now >> 24);
@@ -558,11 +562,13 @@ TimeTicks RolloverProtectedNow() {
 
     // Save the changed state. If the existing value is unchanged from the
     // original, exit the loop.
-    int32_t check = base::Release_CompareAndSwap(&g_last_time_and_rollovers,
-                                                 original, state.as_opaque_32);
-    if (check == original) break;
+    if (g_last_time_and_rollovers.compare_exchange_weak(
+            original, state.as_opaque_32, std::memory_order_acq_rel)) {
+      break;
+    }
 
     // Another thread has done something in between so retry from the top.
+    // {original} has been updated by the {compare_exchange_weak}.
   }
 
   return TimeTicks() +
@@ -643,11 +649,6 @@ TimeDelta QPCValueToTimeDelta(LONGLONG qpc_value) {
 
 TimeTicks QPCNow() { return TimeTicks() + QPCValueToTimeDelta(QPCNowRaw()); }
 
-bool IsBuggyAthlon(const CPU& cpu) {
-  // On Athlon X2 CPUs (e.g. model 15) QueryPerformanceCounter is unreliable.
-  return strcmp(cpu.vendor(), "AuthenticAMD") == 0 && cpu.family() == 15;
-}
-
 void InitializeTimeTicksNowFunctionPointer() {
   LARGE_INTEGER ticks_per_sec = {};
   if (!QueryPerformanceFrequency(&ticks_per_sec)) ticks_per_sec.QuadPart = 0;
@@ -665,8 +666,7 @@ void InitializeTimeTicksNowFunctionPointer() {
   // ~72% of users fall within this category.
   TimeTicksNowFunction now_function;
   CPU cpu;
-  if (ticks_per_sec.QuadPart <= 0 || !cpu.has_non_stop_time_stamp_counter() ||
-      IsBuggyAthlon(cpu)) {
+  if (ticks_per_sec.QuadPart <= 0 || !cpu.has_non_stop_time_stamp_counter()) {
     now_function = &RolloverProtectedNow;
   } else {
     now_function = &QPCNow;
@@ -727,6 +727,8 @@ TimeTicks TimeTicks::Now() {
   ticks = (gethrtime() / Time::kNanosecondsPerMicrosecond);
 #elif V8_OS_POSIX
   ticks = ClockNow(CLOCK_MONOTONIC);
+#elif V8_OS_STARBOARD
+  ticks = SbTimeGetMonotonicNow();
 #else
 #error platform does not implement TimeTicks::HighResolutionNow.
 #endif  // V8_OS_MACOSX
@@ -735,13 +737,33 @@ TimeTicks TimeTicks::Now() {
 }
 
 // static
-bool TimeTicks::IsHighResolution() { return true; }
+bool TimeTicks::IsHighResolution() {
+#if V8_OS_MACOSX
+  return true;
+#elif V8_OS_POSIX
+  static bool is_high_resolution = IsHighResolutionTimer(CLOCK_MONOTONIC);
+  return is_high_resolution;
+#else
+  return true;
+#endif
+}
 
 #endif  // V8_OS_WIN
 
 
 bool ThreadTicks::IsSupported() {
-#if (defined(_POSIX_THREAD_CPUTIME) && (_POSIX_THREAD_CPUTIME >= 0)) || \
+#if V8_OS_STARBOARD
+#if SB_API_VERSION >= 12
+  return SbTimeIsTimeThreadNowSupported();
+#elif SB_HAS(TIME_THREAD_NOW)
+  return true;
+#else
+  return false;
+#endif
+#elif defined(__PASE__)
+  // Thread CPU time accounting is unavailable in PASE
+  return false;
+#elif(defined(_POSIX_THREAD_CPUTIME) && (_POSIX_THREAD_CPUTIME >= 0)) || \
     defined(V8_OS_MACOSX) || defined(V8_OS_ANDROID) || defined(V8_OS_SOLARIS)
   return true;
 #elif defined(V8_OS_WIN)
@@ -753,7 +775,17 @@ bool ThreadTicks::IsSupported() {
 
 
 ThreadTicks ThreadTicks::Now() {
-#if V8_OS_MACOSX
+#if V8_OS_STARBOARD
+#if SB_API_VERSION >= 12
+  if (SbTimeIsTimeThreadNowSupported())
+    return ThreadTicks(SbTimeGetMonotonicThreadNow());
+  UNREACHABLE();
+#elif SB_HAS(TIME_THREAD_NOW)
+  return ThreadTicks(SbTimeGetMonotonicThreadNow());
+#else
+  UNREACHABLE();
+#endif
+#elif V8_OS_MACOSX
   return ThreadTicks(ComputeThreadTicks());
 #elif(defined(_POSIX_THREAD_CPUTIME) && (_POSIX_THREAD_CPUTIME >= 0)) || \
   defined(V8_OS_ANDROID)
@@ -789,8 +821,7 @@ ThreadTicks ThreadTicks::GetForThread(const HANDLE& thread_handle) {
 
 // static
 bool ThreadTicks::IsSupportedWin() {
-  static bool is_supported = base::CPU().has_non_stop_time_stamp_counter() &&
-                             !IsQPCReliable();
+  static bool is_supported = base::CPU().has_non_stop_time_stamp_counter();
   return is_supported;
 }
 
@@ -799,6 +830,12 @@ void ThreadTicks::WaitUntilInitializedWin() {
   while (TSCTicksPerSecond() == 0)
     ::Sleep(10);
 }
+
+#ifdef V8_HOST_ARCH_ARM64
+#define ReadCycleCounter() _ReadStatusReg(ARM64_PMCCNTR_EL0)
+#else
+#define ReadCycleCounter() __rdtsc()
+#endif
 
 double ThreadTicks::TSCTicksPerSecond() {
   DCHECK(IsSupported());
@@ -820,12 +857,12 @@ double ThreadTicks::TSCTicksPerSecond() {
 
   // The first time that this function is called, make an initial reading of the
   // TSC and the performance counter.
-  static const uint64_t tsc_initial = __rdtsc();
+  static const uint64_t tsc_initial = ReadCycleCounter();
   static const uint64_t perf_counter_initial = QPCNowRaw();
 
   // Make a another reading of the TSC and the performance counter every time
   // that this function is called.
-  uint64_t tsc_now = __rdtsc();
+  uint64_t tsc_now = ReadCycleCounter();
   uint64_t perf_counter_now = QPCNowRaw();
 
   // Reset the thread priority.
@@ -858,6 +895,7 @@ double ThreadTicks::TSCTicksPerSecond() {
 
   return tsc_ticks_per_second;
 }
+#undef ReadCycleCounter
 #endif  // V8_OS_WIN
 
 }  // namespace base

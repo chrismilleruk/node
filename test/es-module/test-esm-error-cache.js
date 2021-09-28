@@ -1,13 +1,9 @@
 'use strict';
 
-// Flags: --experimental-modules
-
 const common = require('../common');
 const assert = require('assert');
 
-common.crashOnUnhandledRejection();
-
-const file = '../fixtures/syntax/bad_syntax.js';
+const file = '../fixtures/syntax/bad_syntax.mjs';
 
 let error;
 (async () => {
@@ -20,9 +16,11 @@ let error;
 
   assert(error);
 
-  try {
-    await import(file);
-  } catch (e) {
-    assert.strictEqual(error, e);
-  }
-})();
+  await assert.rejects(
+    () => import(file),
+    (e) => {
+      assert.strictEqual(error, e);
+      return true;
+    }
+  );
+})().then(common.mustCall());

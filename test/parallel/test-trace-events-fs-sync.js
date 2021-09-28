@@ -3,13 +3,10 @@ const common = require('../common');
 const assert = require('assert');
 const cp = require('child_process');
 const fs = require('fs');
+const path = require('path');
 const util = require('util');
 
-if (!common.isMainThread)
-  common.skip('process.chdir is not available in Workers');
-
 const tests = new Array();
-const traceFile = 'node_trace.1.log';
 
 let gid = 1;
 let uid = 1;
@@ -26,7 +23,7 @@ tests['fs.sync.chmod'] = 'fs.writeFileSync("fs.txt", "123", "utf8");' +
                          'fs.chmodSync("fs.txt",100);' +
                          'fs.unlinkSync("fs.txt")';
 tests['fs.sync.chown'] = 'fs.writeFileSync("fs.txt", "123", "utf8");' +
-                         'fs.chownSync("fs.txt",' + uid + ',' + gid + ');' +
+                         `fs.chownSync("fs.txt", ${uid}, ${gid});` +
                          'fs.unlinkSync("fs.txt")';
 tests['fs.sync.close'] = 'fs.writeFileSync("fs.txt", "123", "utf8");' +
                          'fs.unlinkSync("fs.txt")';
@@ -39,7 +36,7 @@ tests['fs.sync.fchmod'] = 'fs.writeFileSync("fs.txt", "123", "utf8");' +
                           'fs.unlinkSync("fs.txt")';
 tests['fs.sync.fchown'] = 'fs.writeFileSync("fs.txt", "123", "utf8");' +
                           'const fd = fs.openSync("fs.txt", "r+");' +
-                          'fs.fchownSync(fd,' + uid + ',' + gid + ');' +
+                          `fs.fchownSync(fd, ${uid}, ${gid});` +
                           'fs.unlinkSync("fs.txt")';
 tests['fs.sync.fdatasync'] = 'fs.writeFileSync("fs.txt", "123", "utf8");' +
                              'const fd = fs.openSync("fs.txt", "r+");' +
@@ -60,6 +57,9 @@ tests['fs.sync.futimes'] = 'fs.writeFileSync("fs.txt", "123", "utf8");' +
                            'const fd = fs.openSync("fs.txt", "r+");' +
                            'fs.futimesSync(fd,1,1);' +
                            'fs.unlinkSync("fs.txt")';
+tests['fs.sync.lchown'] = 'fs.writeFileSync("fs.txt", "123", "utf8");' +
+                          `fs.lchownSync("fs.txt", ${uid}, ${gid});` +
+                          'fs.unlinkSync("fs.txt")';
 tests['fs.sync.link'] = 'fs.writeFileSync("fs.txt", "123", "utf8");' +
                         'fs.linkSync("fs.txt", "linkx");' +
                         'fs.unlinkSync("linkx");' +
@@ -116,27 +116,25 @@ if (common.canCreateSymLink()) {
 
 const tmpdir = require('../common/tmpdir');
 tmpdir.refresh();
-process.chdir(tmpdir.path);
+const traceFile = path.join(tmpdir.path, 'node_trace.1.log');
 
 for (const tr in tests) {
   const proc = cp.spawnSync(process.execPath,
                             [ '--trace-events-enabled',
                               '--trace-event-categories', 'node.fs.sync',
                               '-e', tests[tr] ],
-                            { encoding: 'utf8' });
-  // Some AIX versions don't support futimes or utimes, so skip.
-  if (common.isAIX && proc.status !== 0 && tr === 'fs.sync.futimes') {
-    continue;
-  }
-  if (common.isAIX && proc.status !== 0 && tr === 'fs.sync.utimes') {
-    continue;
-  }
+                            { cwd: tmpdir.path, encoding: 'utf8' });
 
   // Make sure the operation is successful.
-  assert.strictEqual(proc.status, 0, `${tr}:\n${util.inspect(proc)}`);
+  // Don't use assert with a custom message here. Otherwise the
+  // inspection in the message is done eagerly and wastes a lot of CPU
+  // time.
+  if (proc.status !== 0) {
+    throw new Error(`${tr}:\n${util.inspect(proc)}`);
+  }
 
   // Confirm that trace log file is created.
-  assert(common.fileExists(traceFile));
+  assert(fs.existsSync(traceFile));
   const data = fs.readFileSync(traceFile);
   const traces = JSON.parse(data.toString()).traceEvents;
   assert(traces.length > 0);

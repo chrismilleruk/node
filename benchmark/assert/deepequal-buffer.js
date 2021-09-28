@@ -3,19 +3,13 @@ const common = require('../common.js');
 const assert = require('assert');
 
 const bench = common.createBenchmark(main, {
-  n: [1e5],
-  len: [1e2, 1e4],
-  method: [
-    'deepEqual',
-    'deepStrictEqual',
-    'notDeepEqual',
-    'notDeepStrictEqual'
-  ]
+  n: [2e4],
+  len: [1e2, 1e3],
+  strict: [0, 1],
+  method: ['deepEqual', 'notDeepEqual'],
 });
 
-function main({ len, n, method }) {
-  if (!method)
-    method = 'deepEqual';
+function main({ len, n, method, strict }) {
   const data = Buffer.allocUnsafe(len + 1);
   const actual = Buffer.alloc(len);
   const expected = Buffer.alloc(len);
@@ -24,11 +18,14 @@ function main({ len, n, method }) {
   data.copy(expected);
   data.copy(expectedWrong);
 
+  if (strict) {
+    method = method.replace('eep', 'eepStrict');
+  }
   const fn = assert[method];
   const value2 = method.includes('not') ? expectedWrong : expected;
 
   bench.start();
-  for (var i = 0; i < n; ++i) {
+  for (let i = 0; i < n; ++i) {
     fn(actual, value2);
   }
   bench.end(n);

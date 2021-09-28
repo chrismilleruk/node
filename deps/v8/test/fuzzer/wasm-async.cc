@@ -7,10 +7,10 @@
 #include <stdint.h>
 
 #include "include/v8.h"
-#include "src/api.h"
+#include "src/api/api.h"
+#include "src/execution/isolate-inl.h"
 #include "src/heap/factory.h"
-#include "src/isolate-inl.h"
-#include "src/objects-inl.h"
+#include "src/objects/objects-inl.h"
 #include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-module.h"
 #include "test/common/wasm/flag-utils.h"
@@ -25,52 +25,34 @@ class WasmModuleObject;
 namespace wasm {
 namespace fuzzer {
 
-#define ASSIGN(type, var, expr)                      \
-  v8::Local<type> var;                               \
-  do {                                               \
-    if (!expr.ToLocal(&var)) {                       \
-      DCHECK(i_isolate->has_scheduled_exception());  \
-      return 0;                                      \
-    } else {                                         \
-      DCHECK(!i_isolate->has_scheduled_exception()); \
-    }                                                \
-  } while (false)
+class AsyncFuzzerResolver : public i::wasm::CompilationResultResolver {
+ public:
+  AsyncFuzzerResolver(i::Isolate* isolate, bool* done)
+      : isolate_(isolate), done_(done) {}
 
-namespace {
-// We need this helper function because we cannot use
-// Handle<WasmModuleObject>::cast here. To use this function we would have to
-// mark it with V8_EXPORT_PRIVATE, which is quite ugly in this case.
-Handle<WasmModuleObject> ToWasmModuleObjectUnchecked(Handle<Object> that) {
-  return handle(reinterpret_cast<WasmModuleObject*>(*that));
-}
-}
+  void OnCompilationSucceeded(i::Handle<i::WasmModuleObject> module) override {
+    *done_ = true;
+    InterpretAndExecuteModule(isolate_, module);
+  }
 
-void InstantiateCallback(const FunctionCallbackInfo<Value>& args) {
-  DCHECK_GE(args.Length(), 1);
-  v8::Isolate* isolate = args.GetIsolate();
-  MicrotasksScope does_not_run_microtasks(
-      isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
+  void OnCompilationFailed(i::Handle<i::Object> error_reason) override {
+    *done_ = true;
+  }
 
-  v8::HandleScope scope(isolate);
-
-  Local<v8::Value> module = args[0];
-
-  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-
-  Handle<WasmModuleObject> module_obj =
-      ToWasmModuleObjectUnchecked(Utils::OpenHandle(v8::Object::Cast(*module)));
-  InterpretAndExecuteModule(i_isolate, module_obj);
-}
+ private:
+  i::Isolate* isolate_;
+  bool* done_;
+};
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
-  FlagScope<bool> turn_on_async_compile(
-      &v8::internal::FLAG_wasm_async_compilation, true);
-  FlagScope<uint32_t> max_mem_flag_scope(&v8::internal::FLAG_wasm_max_mem_pages,
-                                         32);
-  FlagScope<uint32_t> max_table_size_scope(
-      &v8::internal::FLAG_wasm_max_table_size, 100);
   v8_fuzzer::FuzzerSupport* support = v8_fuzzer::FuzzerSupport::Get();
   v8::Isolate* isolate = support->GetIsolate();
+
+  // Set some more flags.
+  FLAG_wasm_async_compilation = true;
+  FLAG_wasm_max_mem_pages = 32;
+  FLAG_wasm_max_table_size = 100;
+
   i::Isolate* i_isolate = reinterpret_cast<v8::internal::Isolate*>(isolate);
 
   // Clear any pending exceptions from a prior run.
@@ -82,34 +64,30 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   v8::HandleScope handle_scope(isolate);
   i::HandleScope internal_scope(i_isolate);
   v8::Context::Scope context_scope(support->GetContext());
+
+  // We explicitly enable staged WebAssembly features here to increase fuzzer
+  // coverage. For libfuzzer fuzzers it is not possible that the fuzzer enables
+  // the flag by itself.
+  OneTimeEnableStagedWasmFeatures(isolate);
+
   TryCatch try_catch(isolate);
   testing::SetupIsolateForWasmModule(i_isolate);
 
-  // Get the promise for async compilation.
-  ASSIGN(Promise::Resolver, resolver,
-         Promise::Resolver::New(support->GetContext()));
-  Local<Promise> promise = resolver->GetPromise();
-
-  i_isolate->wasm_engine()->AsyncCompile(i_isolate, Utils::OpenHandle(*promise),
-                                         ModuleWireBytes(data, data + size),
-                                         false);
-
-  ASSIGN(Function, instantiate_impl,
-         Function::New(support->GetContext(), &InstantiateCallback,
-                       Undefined(isolate)));
-
-  ASSIGN(Promise, result,
-         promise->Then(support->GetContext(), instantiate_impl));
+  bool done = false;
+  auto enabled_features = i::wasm::WasmFeatures::FromIsolate(i_isolate);
+  constexpr const char* kAPIMethodName = "WasmAsyncFuzzer.compile";
+  GetWasmEngine()->AsyncCompile(
+      i_isolate, enabled_features,
+      std::make_shared<AsyncFuzzerResolver>(i_isolate, &done),
+      ModuleWireBytes(data, data + size), false, kAPIMethodName);
 
   // Wait for the promise to resolve.
-  while (result->State() == Promise::kPending) {
+  while (!done) {
     support->PumpMessageLoop(platform::MessageLoopBehavior::kWaitForWork);
-    isolate->RunMicrotasks();
+    isolate->PerformMicrotaskCheckpoint();
   }
   return 0;
 }
-
-#undef ASSIGN
 
 }  // namespace fuzzer
 }  // namespace wasm

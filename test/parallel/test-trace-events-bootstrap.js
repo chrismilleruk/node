@@ -2,12 +2,9 @@
 const common = require('../common');
 const assert = require('assert');
 const cp = require('child_process');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 const tmpdir = require('../common/tmpdir');
-
-if (!common.isMainThread)
-  common.skip('process.chdir is not available in Workers');
 
 const names = [
   'environment',
@@ -16,34 +13,26 @@ const names = [
   'loopStart',
   'loopExit',
   'bootstrapComplete',
-  'thirdPartyMainStart',
-  'thirdPartyMainEnd',
-  'clusterSetupStart',
-  'clusterSetupEnd',
-  'moduleLoadStart',
-  'moduleLoadEnd',
-  'preloadModulesLoadStart',
-  'preloadModulesLoadEnd'
 ];
 
 if (process.argv[2] === 'child') {
-  1 + 1;
+  1 + 1; // eslint-disable-line no-unused-expressions
 } else {
   tmpdir.refresh();
-  process.chdir(tmpdir.path);
 
   const proc = cp.fork(__filename,
                        [ 'child' ], {
+                         cwd: tmpdir.path,
                          execArgv: [
                            '--trace-event-categories',
-                           'node.bootstrap'
+                           'node.bootstrap',
                          ]
                        });
 
   proc.once('exit', common.mustCall(() => {
     const file = path.join(tmpdir.path, 'node_trace.1.log');
 
-    assert(common.fileExists(file));
+    assert(fs.existsSync(file));
     fs.readFile(file, common.mustCall((err, data) => {
       const traces = JSON.parse(data.toString()).traceEvents
         .filter((trace) => trace.cat !== '__metadata');

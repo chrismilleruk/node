@@ -1,20 +1,19 @@
 'use strict';
 
-// Flags: --experimental-vm-modules
+// Flags: --experimental-vm-modules --harmony-import-assertions
 
 const common = require('../common');
-common.crashOnUnhandledRejection();
 
 const assert = require('assert');
-const { URL } = require('url');
 
-const { Module } = require('vm');
+const { SourceTextModule } = require('vm');
 
 async function simple() {
-  const foo = new Module('export default 5;');
+  const foo = new SourceTextModule('export default 5;');
   await foo.link(common.mustNotCall());
 
-  const bar = new Module('import five from "foo"; five');
+  globalThis.fiveResult = undefined;
+  const bar = new SourceTextModule('import five from "foo"; fiveResult = five');
 
   assert.deepStrictEqual(bar.dependencySpecifiers, ['foo']);
 
@@ -24,17 +23,17 @@ async function simple() {
     return foo;
   }));
 
-  bar.instantiate();
-
-  assert.strictEqual((await bar.evaluate()).result, 5);
+  await bar.evaluate();
+  assert.strictEqual(globalThis.fiveResult, 5);
+  delete globalThis.fiveResult;
 }
 
 async function depth() {
-  const foo = new Module('export default 5');
+  const foo = new SourceTextModule('export default 5');
   await foo.link(common.mustNotCall());
 
   async function getProxy(parentName, parentModule) {
-    const mod = new Module(`
+    const mod = new SourceTextModule(`
       import ${parentName} from '${parentName}';
       export default ${parentName};
     `);
@@ -50,38 +49,36 @@ async function depth() {
   const baz = await getProxy('bar', bar);
   const barz = await getProxy('baz', baz);
 
-  barz.instantiate();
   await barz.evaluate();
 
   assert.strictEqual(barz.namespace.default, 5);
 }
 
 async function circular() {
-  const foo = new Module(`
+  const foo = new SourceTextModule(`
     import getFoo from 'bar';
     export let foo = 42;
     export default getFoo();
   `);
-  const bar = new Module(`
+  const bar = new SourceTextModule(`
     import { foo } from 'foo';
     export default function getFoo() {
       return foo;
     }
   `);
-  await foo.link(common.mustCall(async (fooSpecifier, fooModule) => {
-    assert.strictEqual(fooModule, foo);
-    assert.strictEqual(fooSpecifier, 'bar');
-    await bar.link(common.mustCall((barSpecifier, barModule) => {
-      assert.strictEqual(barModule, bar);
-      assert.strictEqual(barSpecifier, 'foo');
-      assert.strictEqual(foo.linkingStatus, 'linking');
-      return foo;
-    }));
-    assert.strictEqual(bar.linkingStatus, 'linked');
-    return bar;
-  }));
+  await foo.link(common.mustCall(async (specifier, module) => {
+    if (specifier === 'bar') {
+      assert.strictEqual(module, foo);
+      return bar;
+    }
+    assert.strictEqual(specifier, 'foo');
+    assert.strictEqual(module, bar);
+    assert.strictEqual(foo.status, 'linking');
+    return foo;
+  }, 2));
 
-  foo.instantiate();
+  assert.strictEqual(bar.status, 'linked');
+
   await foo.evaluate();
   assert.strictEqual(foo.namespace.default, 42);
 }
@@ -102,26 +99,42 @@ async function circular2() {
     `,
     './a.mjs': `
       export * from './b.mjs';
-      export var fromA;
+      export let fromA;
     `,
     './b.mjs': `
       export * from './a.mjs';
-      export var fromB;
+      export let fromB;
     `
   };
   const moduleMap = new Map();
-  const rootModule = new Module(sourceMap.root, { url: 'vm:root' });
+  const rootModule = new SourceTextModule(sourceMap.root, {
+    identifier: 'vm:root',
+  });
   async function link(specifier, referencingModule) {
     if (moduleMap.has(specifier)) {
       return moduleMap.get(specifier);
     }
-    const mod = new Module(sourceMap[specifier], { url: new URL(specifier, 'file:///').href });
+    const mod = new SourceTextModule(sourceMap[specifier], {
+      identifier: new URL(specifier, 'file:///').href,
+    });
     moduleMap.set(specifier, mod);
     return mod;
   }
   await rootModule.link(link);
-  rootModule.instantiate();
   await rootModule.evaluate();
+}
+
+async function asserts() {
+  const m = new SourceTextModule(`
+  import "foo" assert { n1: 'v1', n2: 'v2' };
+  `, { identifier: 'm' });
+  await m.link((s, r, p) => {
+    assert.strictEqual(s, 'foo');
+    assert.strictEqual(r.identifier, 'm');
+    assert.strictEqual(p.assert.n1, 'v1');
+    assert.strictEqual(p.assert.n2, 'v2');
+    return new SourceTextModule('');
+  });
 }
 
 const finished = common.mustCall();
@@ -131,5 +144,6 @@ const finished = common.mustCall();
   await depth();
   await circular();
   await circular2();
+  await asserts();
   finished();
-})();
+})().then(common.mustCall());

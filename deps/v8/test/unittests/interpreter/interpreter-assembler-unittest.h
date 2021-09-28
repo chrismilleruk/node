@@ -28,8 +28,8 @@ class InterpreterAssemblerTestState : public compiler::CodeAssemblerState {
 
 class InterpreterAssemblerTest : public TestWithIsolateAndZone {
  public:
-  InterpreterAssemblerTest() {}
-  ~InterpreterAssemblerTest() override {}
+  InterpreterAssemblerTest() : TestWithIsolateAndZone(kCompressGraphZone) {}
+  ~InterpreterAssemblerTest() override = default;
 
   class InterpreterAssemblerForTest final : public InterpreterAssembler {
    public:
@@ -38,19 +38,27 @@ class InterpreterAssemblerTest : public TestWithIsolateAndZone {
         OperandScale operand_scale = OperandScale::kSingle)
         : InterpreterAssembler(state, bytecode, operand_scale) {}
     ~InterpreterAssemblerForTest();
+    InterpreterAssemblerForTest(const InterpreterAssemblerForTest&) = delete;
+    InterpreterAssemblerForTest& operator=(const InterpreterAssemblerForTest&) =
+        delete;
 
     Matcher<compiler::Node*> IsLoad(
         const Matcher<compiler::LoadRepresentation>& rep_matcher,
         const Matcher<compiler::Node*>& base_matcher,
         const Matcher<compiler::Node*>& index_matcher,
         LoadSensitivity needs_poisoning = LoadSensitivity::kSafe);
+    Matcher<compiler::Node*> IsLoadFromObject(
+        const Matcher<compiler::LoadRepresentation>& rep_matcher,
+        const Matcher<compiler::Node*>& base_matcher,
+        const Matcher<compiler::Node*>& index_matcher);
     Matcher<compiler::Node*> IsStore(
         const Matcher<compiler::StoreRepresentation>& rep_matcher,
         const Matcher<compiler::Node*>& base_matcher,
         const Matcher<compiler::Node*>& index_matcher,
         const Matcher<compiler::Node*>& value_matcher);
 
-    Matcher<Node*> IsWordNot(const Matcher<Node*>& value_matcher);
+    Matcher<compiler::Node*> IsWordNot(
+        const Matcher<compiler::Node*>& value_matcher);
 
     Matcher<compiler::Node*> IsUnsignedByteOperand(
         int offset, LoadSensitivity needs_poisoning);
@@ -79,9 +87,6 @@ class InterpreterAssemblerTest : public TestWithIsolateAndZone {
 
     Matcher<compiler::Node*> IsLoadRegisterOperand(int offset,
                                                    OperandSize operand_size);
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(InterpreterAssemblerForTest);
   };
 };
 

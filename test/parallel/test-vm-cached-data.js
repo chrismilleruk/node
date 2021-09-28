@@ -41,12 +41,14 @@ function testProduceConsume() {
 
   const data = produce(source);
 
-  // It should consume code cache
-  const script = new vm.Script(source, {
-    cachedData: data
-  });
-  assert(!script.cachedDataRejected);
-  assert.strictEqual(script.runInThisContext()(), 'original');
+  for (const cachedData of common.getArrayBufferViews(data)) {
+    // It should consume code cache
+    const script = new vm.Script(source, {
+      cachedData
+    });
+    assert(!script.cachedDataRejected);
+    assert.strictEqual(script.runInThisContext()(), 'original');
+  }
 }
 testProduceConsume();
 
@@ -84,12 +86,12 @@ function testRejectSlice() {
 testRejectSlice();
 
 // It should throw on non-Buffer cachedData
-common.expectsError(() => {
+assert.throws(() => {
   new vm.Script('function abc() {}', {
     cachedData: 'ohai'
   });
 }, {
   code: 'ERR_INVALID_ARG_TYPE',
-  type: TypeError,
-  message: /must be one of type Buffer or Uint8Array/
+  name: 'TypeError',
+  message: /must be an instance of Buffer, TypedArray, or DataView/
 });

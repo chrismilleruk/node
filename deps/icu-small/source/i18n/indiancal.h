@@ -25,7 +25,7 @@ U_NAMESPACE_BEGIN
  * Concrete class which provides the Indian calendar.
  * <P>
  * <code>IndianCalendar</code> is a subclass of <code>Calendar</code>
- * that numbers years since the begining of SAKA ERA.  This is the civil calendar
+ * that numbers years since the beginning of SAKA ERA.  This is the civil calendar
  * which is accepted by government of India as Indian National Calendar.
  * The two calendars most widely used in India today are the Vikrama calendar
  * followed in North India and the Shalivahana or Saka calendar which is followed
@@ -68,7 +68,7 @@ U_NAMESPACE_BEGIN
  */
 
 
-class IndianCalendar : public Calendar {
+class U_I18N_API IndianCalendar : public Calendar {
 public:
   /**
    * Useful constants for IndianCalendar.
@@ -147,7 +147,7 @@ public:
    * @param aLocale  The given locale.
    * @param success  Indicates the status of IndianCalendar object construction.
    *                 Returns U_ZERO_ERROR if constructed successfully.
-   * @param beCivil  Whether the calendar should be civil (default-TRUE) or religious (FALSE)
+   * @param beCivil  Whether the calendar should be civil (default-true) or religious (false)
    * @internal
    */
   IndianCalendar(const Locale& aLocale, UErrorCode &success);
@@ -186,7 +186,7 @@ public:
   // TODO: copy c'tor, etc
 
   // clone
-  virtual Calendar* clone() const;
+  virtual IndianCalendar* clone() const;
 
  private:
   /**
@@ -274,10 +274,10 @@ public:
    * @return   The class ID for all objects of this class.
    * @internal
    */
-  U_I18N_API static UClassID U_EXPORT2 getStaticClassID(void);
+  static UClassID U_EXPORT2 getStaticClassID(void);
 
   /**
-   * return the calendar type, "buddhist".
+   * return the calendar type, "indian".
    *
    * @return calendar type
    * @internal
@@ -303,7 +303,7 @@ protected:
 
 
   /**
-   * Returns TRUE because the Indian Calendar does have a default century
+   * Returns true because the Indian Calendar does have a default century
    * @internal
    */
   virtual UBool haveDefaultCentury() const;
@@ -320,49 +320,6 @@ protected:
    * @internal
    */
   virtual int32_t defaultCenturyStartYear() const;
-
- private: // default century stuff.
-  /**
-   * The system maintains a static default century start date.  This is initialized
-   * the first time it is used.  Before then, it is set to SYSTEM_DEFAULT_CENTURY to
-   * indicate an uninitialized state.  Once the system default century date and year
-   * are set, they do not change.
-   */
-  static UDate         fgSystemDefaultCenturyStart;
-
-  /**
-   * See documentation for systemDefaultCenturyStart.
-   */
-  static int32_t          fgSystemDefaultCenturyStartYear;
-
-  /**
-   * Default value that indicates the defaultCenturyStartYear is unitialized
-   */
-  static const int32_t    fgSystemDefaultCenturyYear;
-
-  /**
-   * start of default century, as a date
-   */
-  static const UDate        fgSystemDefaultCentury;
-
-  /**
-   * Returns the beginning date of the 100-year window that dates
-   * with 2-digit years are considered to fall within.
-   */
-  UDate         internalGetDefaultCenturyStart(void) const;
-
-  /**
-   * Returns the first year of the 100-year window that dates with
-   * 2-digit years are considered to fall within.
-   */
-  int32_t          internalGetDefaultCenturyStartYear(void) const;
-
-  /**
-   * Initializes the 100-year window that dates with 2-digit years
-   * are considered to fall within so that its start date is 80 years
-   * before the current time.
-   */
-  static void  initializeSystemDefaultCentury(void);
 };
 
 U_NAMESPACE_END

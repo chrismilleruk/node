@@ -5,9 +5,9 @@
 #include "src/extensions/ignition-statistics-extension.h"
 
 #include "src/base/logging.h"
+#include "src/execution/isolate.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/interpreter/interpreter.h"
-#include "src/isolate.h"
 
 namespace v8 {
 namespace internal {
@@ -27,7 +27,6 @@ const char* const IgnitionStatisticsExtension::kSource =
 
 void IgnitionStatisticsExtension::GetIgnitionDispatchCounters(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
-  DCHECK(FLAG_trace_ignition_dispatches);
   args.GetReturnValue().Set(reinterpret_cast<Isolate*>(args.GetIsolate())
                                 ->interpreter()
                                 ->GetDispatchCountersObject());

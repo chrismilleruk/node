@@ -1,7 +1,7 @@
 #include "node_test_fixture.h"
 
-uv_loop_t NodeTestFixture::current_loop;
-std::unique_ptr<node::NodePlatform> NodeTestFixture::platform;
-std::unique_ptr<v8::ArrayBuffer::Allocator> NodeTestFixture::allocator;
-std::unique_ptr<v8::TracingController> NodeTestFixture::tracing_controller;
-v8::Isolate::CreateParams NodeTestFixture::params;
+ArrayBufferUniquePtr NodeZeroIsolateTestFixture::allocator{nullptr, nullptr};
+uv_loop_t NodeZeroIsolateTestFixture::current_loop;
+NodePlatformUniquePtr NodeZeroIsolateTestFixture::platform;
+TracingAgentUniquePtr NodeZeroIsolateTestFixture::tracing_agent;
+bool NodeZeroIsolateTestFixture::node_initialized = false;

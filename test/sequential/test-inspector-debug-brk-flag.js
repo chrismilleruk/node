@@ -1,4 +1,3 @@
-// Flags: --expose-internals
 'use strict';
 const common = require('../common');
 
@@ -20,22 +19,21 @@ async function testBreakpointOnStart(session) {
       'params': { 'interval': 100 } },
     { 'method': 'Debugger.setBlackboxPatterns',
       'params': { 'patterns': [] } },
-    { 'method': 'Runtime.runIfWaitingForDebugger' }
+    { 'method': 'Runtime.runIfWaitingForDebugger' },
   ];
 
   session.send(commands);
-  await session.waitForBreakOnLine(0, session.scriptPath());
+  await session.waitForBreakOnLine(0, session.scriptURL());
 }
 
 async function runTests() {
-  const child = new NodeInstance(['--inspect', '--debug-brk']);
+  const child = new NodeInstance(['--inspect', '--inspect-brk']);
   const session = await child.connectInspectorSession();
 
   await testBreakpointOnStart(session);
   await session.runToCompletion();
 
-  assert.strictEqual(55, (await child.expectShutdown()).exitCode);
+  assert.strictEqual((await child.expectShutdown()).exitCode, 55);
 }
 
-common.crashOnUnhandledRejection();
-runTests();
+runTests().then(common.mustCall());

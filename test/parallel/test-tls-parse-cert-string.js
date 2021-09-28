@@ -5,18 +5,22 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
+const {
+  hijackStderr,
+  restoreStderr
+} = require('../common/hijackstdio');
 const assert = require('assert');
-// Flags: --expose_internals
-const internalTLS = require('internal/tls');
+// Flags: --expose-internals
+const { parseCertString } = require('internal/tls/parse-cert-string');
 const tls = require('tls');
 
 const noOutput = common.mustNotCall();
-common.hijackStderr(noOutput);
+hijackStderr(noOutput);
 
 {
   const singles = 'C=US\nST=CA\nL=SF\nO=Node.js Foundation\nOU=Node.js\n' +
                   'CN=ca1\nemailAddress=ry@clouds.org';
-  const singlesOut = internalTLS.parseCertString(singles);
+  const singlesOut = parseCertString(singles);
   assert.deepStrictEqual(singlesOut, {
     __proto__: null,
     C: 'US',
@@ -32,7 +36,7 @@ common.hijackStderr(noOutput);
 {
   const doubles = 'OU=Domain Control Validated\nOU=PositiveSSL Wildcard\n' +
                   'CN=*.nodejs.org';
-  const doublesOut = internalTLS.parseCertString(doubles);
+  const doublesOut = parseCertString(doubles);
   assert.deepStrictEqual(doublesOut, {
     __proto__: null,
     OU: [ 'Domain Control Validated', 'PositiveSSL Wildcard' ],
@@ -42,7 +46,7 @@ common.hijackStderr(noOutput);
 
 {
   const invalid = 'fhqwhgads';
-  const invalidOut = internalTLS.parseCertString(invalid);
+  const invalidOut = parseCertString(invalid);
   assert.deepStrictEqual(invalidOut, { __proto__: null });
 }
 
@@ -51,10 +55,10 @@ common.hijackStderr(noOutput);
   const expected = Object.create(null);
   expected.__proto__ = 'mostly harmless';
   expected.hasOwnProperty = 'not a function';
-  assert.deepStrictEqual(internalTLS.parseCertString(input), expected);
+  assert.deepStrictEqual(parseCertString(input), expected);
 }
 
-common.restoreStderr();
+restoreStderr();
 
 {
   common.expectWarning('DeprecationWarning',

@@ -97,6 +97,17 @@ assert.strictEqual(decoder.lastTotal, 3);
 
 assert.strictEqual(decoder.end(), '\ufffd');
 
+// ArrayBufferView tests
+const arrayBufferViewStr = 'String for ArrayBufferView tests\n';
+const inputBuffer = Buffer.from(arrayBufferViewStr.repeat(8), 'utf8');
+for (const expectView of common.getArrayBufferViews(inputBuffer)) {
+  assert.strictEqual(
+    decoder.write(expectView),
+    inputBuffer.toString('utf8')
+  );
+  assert.strictEqual(decoder.end(), '');
+}
+
 decoder = new StringDecoder('utf8');
 assert.strictEqual(decoder.write(Buffer.from('E18B', 'hex')), '');
 assert.strictEqual(decoder.end(), '\ufffd');
@@ -143,25 +154,63 @@ decoder = new StringDecoder('utf16le');
 assert.strictEqual(decoder.write(Buffer.from('3DD84D', 'hex')), '\ud83d');
 assert.strictEqual(decoder.end(), '');
 
-common.expectsError(
+// Regression test for https://github.com/nodejs/node/issues/22358
+// (unaligned UTF-16 access).
+decoder = new StringDecoder('utf16le');
+assert.strictEqual(decoder.write(Buffer.alloc(1)), '');
+assert.strictEqual(decoder.write(Buffer.alloc(20)), '\0'.repeat(10));
+assert.strictEqual(decoder.write(Buffer.alloc(48)), '\0'.repeat(24));
+assert.strictEqual(decoder.end(), '');
+
+// Regression tests for https://github.com/nodejs/node/issues/22626
+// (not enough replacement chars when having seen more than one byte of an
+// incomplete multibyte characters).
+decoder = new StringDecoder('utf8');
+assert.strictEqual(decoder.write(Buffer.from('f69b', 'hex')), '');
+assert.strictEqual(decoder.write(Buffer.from('d1', 'hex')), '\ufffd\ufffd');
+assert.strictEqual(decoder.end(), '\ufffd');
+assert.strictEqual(decoder.write(Buffer.from('f4', 'hex')), '');
+assert.strictEqual(decoder.write(Buffer.from('bde5', 'hex')), '\ufffd\ufffd');
+assert.strictEqual(decoder.end(), '\ufffd');
+
+assert.throws(
   () => new StringDecoder(1),
   {
     code: 'ERR_UNKNOWN_ENCODING',
-    type: TypeError,
+    name: 'TypeError',
     message: 'Unknown encoding: 1'
   }
 );
 
-common.expectsError(
+assert.throws(
   () => new StringDecoder('test'),
   {
     code: 'ERR_UNKNOWN_ENCODING',
-    type: TypeError,
+    name: 'TypeError',
     message: 'Unknown encoding: test'
   }
 );
 
-// test verifies that StringDecoder will correctly decode the given input
+assert.throws(
+  () => new StringDecoder('utf8').write(null),
+  {
+    code: 'ERR_INVALID_ARG_TYPE',
+    name: 'TypeError',
+    message: 'The "buf" argument must be an instance of Buffer, TypedArray,' +
+      ' or DataView. Received null'
+  }
+);
+
+if (common.enoughTestMem) {
+  assert.throws(
+    () => new StringDecoder().write(Buffer.alloc(0x1fffffe8 + 1).fill('a')),
+    {
+      code: 'ERR_STRING_TOO_LONG',
+    }
+  );
+}
+
+// Test verifies that StringDecoder will correctly decode the given input
 // buffer with the given encoding to the expected output. It will attempt all
 // possible ways to write() the input buffer, see writeSequences(). The
 // singleSequence allows for easy debugging of a specific sequence which is
@@ -188,7 +237,7 @@ function test(encoding, input, expected, singleSequence) {
         `input: ${input.toString('hex').match(hexNumberRE)}\n` +
         `Write sequence: ${JSON.stringify(sequence)}\n` +
         `Full Decoder State: ${inspect(decoder)}`;
-      assert.fail(output, expected, message);
+      assert.fail(message);
     }
   });
 }

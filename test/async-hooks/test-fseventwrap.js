@@ -3,12 +3,15 @@ const common = require('../common');
 
 const assert = require('assert');
 const initHooks = require('./init-hooks');
-const tick = require('./tick');
+const tick = require('../common/tick');
 const { checkInvocations } = require('./hook-checks');
 const fs = require('fs');
 
 if (!common.isMainThread)
   common.skip('Worker bootstrapping works differently -> different async IDs');
+
+if (common.isIBMi)
+  common.skip('IBMi does not support fs.watch()');
 
 const hooks = initHooks();
 

@@ -34,8 +34,8 @@ function test(size, err, next) {
     if (next) next();
   });
 
-  server.listen(0, '127.0.0.1', function() {
-    // client set minimum DH parameter size to 2048 bits so that
+  server.listen(0, function() {
+    // Client set minimum DH parameter size to 2048 bits so that
     // it fails when it make a connection to the tls server where
     // dhparams is 1024 bits
     const client = tls.connect({

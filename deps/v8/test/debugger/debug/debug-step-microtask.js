@@ -12,7 +12,7 @@ function listener(event, exec_state, event_data, data) {
       var line = exec_state.frame(0).sourceLineText();
       log.push(line);
       if (!/STOP/.test(line)) {
-        exec_state.prepareStep(Debug.StepAction.StepIn);
+        exec_state.prepareStep(Debug.StepAction.StepInto);
       }
     }
   } catch (e) {
@@ -44,7 +44,7 @@ setTimeout(function() {
   Debug.setListener(null);
   assertNull(exception);
   var expectation =
-    ["debugger;","debugger;","  print(1);","}","  return 2;","  return 2;",
+    ["debugger;","","  print(1);","}","  return 2;","  return 2;",
      "  throw new Error();","  print(3);","}  // STOP"];
   assertEquals(log, expectation);
 });

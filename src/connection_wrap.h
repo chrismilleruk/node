@@ -3,19 +3,15 @@
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
-#include "env.h"
 #include "stream_wrap.h"
-#include "v8.h"
 
 namespace node {
+
+class Environment;
 
 template <typename WrapType, typename UVType>
 class ConnectionWrap : public LibuvStreamWrap {
  public:
-  UVType* UVHandle() {
-    return &handle_;
-  }
-
   static void OnConnection(uv_stream_t* handle, int status);
   static void AfterConnect(uv_connect_t* req, int status);
 

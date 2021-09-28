@@ -37,6 +37,11 @@
  * See https://github.com/joyent/libuv/issues/210
  */
 TEST_IMPL(error_message) {
+#if defined(__ASAN__)
+  RETURN_SKIP("Test does not currently work in ASAN");
+#endif
+  char buf[32];
+
   /* Cop out. Can't do proper checks on systems with
    * i18n-ized error messages...
    */
@@ -45,9 +50,13 @@ TEST_IMPL(error_message) {
     return 0;
   }
 
-  ASSERT(strstr(uv_strerror(UV_EINVAL), "Success") == NULL);
+  ASSERT_NULL(strstr(uv_strerror(UV_EINVAL), "Success"));
   ASSERT(strcmp(uv_strerror(1337), "Unknown error") == 0);
   ASSERT(strcmp(uv_strerror(-1337), "Unknown error") == 0);
+
+  ASSERT_NULL(strstr(uv_strerror_r(UV_EINVAL, buf, sizeof(buf)), "Success"));
+  ASSERT_NOT_NULL(strstr(uv_strerror_r(1337, buf, sizeof(buf)), "1337"));
+  ASSERT_NOT_NULL(strstr(uv_strerror_r(-1337, buf, sizeof(buf)), "-1337"));
 
   return 0;
 }

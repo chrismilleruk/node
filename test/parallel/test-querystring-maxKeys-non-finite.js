@@ -7,11 +7,8 @@ require('../common');
 const assert = require('assert');
 const parse = require('querystring').parse;
 
-/*
-taken from express-js/body-parser
-https://github.com/expressjs/body-parser/
-blob/ed25264fb494cf0c8bc992b8257092cd4f694d5e/test/urlencoded.js#L636-L651
-*/
+// Taken from express-js/body-parser
+// https://github.com/expressjs/body-parser/blob/ed25264fb494cf0c8bc992b8257092cd4f694d5e/test/urlencoded.js#L636-L651
 function createManyParams(count) {
   let str = '';
 
@@ -34,7 +31,7 @@ const originalMaxLength = 1000;
 const params = createManyParams(count);
 
 // thealphanerd
-// 27def4f introduced a change to parse that would cause Inifity
+// 27def4f introduced a change to parse that would cause Infinity
 // to be passed to String.prototype.split as an argument for limit
 // In this instance split will always return an empty array
 // this test confirms that the output of parse is the expected length

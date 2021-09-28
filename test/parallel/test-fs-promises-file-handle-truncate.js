@@ -7,7 +7,6 @@ const { open, readFile } = require('fs').promises;
 const tmpdir = require('../common/tmpdir');
 
 tmpdir.refresh();
-common.crashOnUnhandledRejection();
 
 async function validateTruncate() {
   const text = 'Hello world';
@@ -21,6 +20,8 @@ async function validateTruncate() {
 
   await fileHandle.truncate(5);
   assert.deepStrictEqual((await readFile(filename)).toString(), 'Hello');
+
+  await fileHandle.close();
 }
 
 validateTruncate().then(common.mustCall());

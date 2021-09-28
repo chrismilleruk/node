@@ -43,13 +43,15 @@ class Worklist {
 
     // Returns true if the worklist is empty. Can only be used from the main
     // thread without concurrent access.
-    bool IsGlobalEmpty() { return worklist_->IsGlobalEmpty(); }
+    bool IsEmpty() { return worklist_->IsEmpty(); }
 
     bool IsGlobalPoolEmpty() { return worklist_->IsGlobalPoolEmpty(); }
 
     size_t LocalPushSegmentSize() {
       return worklist_->LocalPushSegmentSize(task_id_);
     }
+
+    void FlushToGlobal() { worklist_->FlushToGlobal(task_id_); }
 
    private:
     Worklist<EntryType, SEGMENT_SIZE>* worklist_;
@@ -62,6 +64,7 @@ class Worklist {
   Worklist() : Worklist(kMaxNumTasks) {}
 
   explicit Worklist(int num_tasks) : num_tasks_(num_tasks) {
+    DCHECK_LE(num_tasks, kMaxNumTasks);
     for (int i = 0; i < num_tasks_; i++) {
       private_push_segment(i) = NewSegment();
       private_pop_segment(i) = NewSegment();
@@ -69,13 +72,22 @@ class Worklist {
   }
 
   ~Worklist() {
-    CHECK(IsGlobalEmpty());
+    CHECK(IsEmpty());
     for (int i = 0; i < num_tasks_; i++) {
       DCHECK_NOT_NULL(private_push_segment(i));
       DCHECK_NOT_NULL(private_pop_segment(i));
       delete private_push_segment(i);
       delete private_pop_segment(i);
     }
+  }
+
+  // Swaps content with the given worklist. Local buffers need to
+  // be empty, not thread safe.
+  void Swap(Worklist<EntryType, SEGMENT_SIZE>& other) {
+    CHECK(AreLocalsEmpty());
+    CHECK(other.AreLocalsEmpty());
+
+    global_pool_.Swap(other.global_pool_);
   }
 
   bool Push(int task_id, EntryType entry) {
@@ -119,17 +131,25 @@ class Worklist {
 
   bool IsGlobalPoolEmpty() { return global_pool_.IsEmpty(); }
 
-  bool IsGlobalEmpty() {
+  bool IsEmpty() {
+    if (!AreLocalsEmpty()) return false;
+    return global_pool_.IsEmpty();
+  }
+
+  bool AreLocalsEmpty() {
     for (int i = 0; i < num_tasks_; i++) {
       if (!IsLocalEmpty(i)) return false;
     }
-    return global_pool_.IsEmpty();
+    return true;
   }
 
   size_t LocalSize(int task_id) {
     return private_pop_segment(task_id)->Size() +
            private_push_segment(task_id)->Size();
   }
+
+  // Thread-safe but may return an outdated result.
+  size_t GlobalPoolSize() const { return global_pool_.Size(); }
 
   // Clears all segments. Frees the global segment pool.
   //
@@ -159,6 +179,20 @@ class Worklist {
     global_pool_.Update(callback);
   }
 
+  // Calls the specified callback on each element of the deques.
+  // The signature of the callback is:
+  //   void Callback(EntryType entry).
+  //
+  // Assumes that no other tasks are running.
+  template <typename Callback>
+  void Iterate(Callback callback) {
+    for (int i = 0; i < num_tasks_; i++) {
+      private_pop_segment(i)->Iterate(callback);
+      private_push_segment(i)->Iterate(callback);
+    }
+    global_pool_.Iterate(callback);
+  }
+
   template <typename Callback>
   void IterateGlobalPool(Callback callback) {
     global_pool_.Iterate(callback);
@@ -170,8 +204,7 @@ class Worklist {
   }
 
   void MergeGlobalPool(Worklist* other) {
-    auto pair = other->global_pool_.Extract();
-    global_pool_.MergeList(pair.first, pair.second);
+    global_pool_.Merge(&other->global_pool_);
   }
 
  private:
@@ -246,15 +279,28 @@ class Worklist {
    public:
     GlobalPool() : top_(nullptr) {}
 
+    // Swaps contents, not thread safe.
+    void Swap(GlobalPool& other) {
+      Segment* temp = top_;
+      set_top(other.top_);
+      other.set_top(temp);
+      size_t other_size = other.size_.exchange(
+          size_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      size_.store(other_size, std::memory_order_relaxed);
+    }
+
     V8_INLINE void Push(Segment* segment) {
-      base::LockGuard<base::Mutex> guard(&lock_);
+      base::MutexGuard guard(&lock_);
       segment->set_next(top_);
       set_top(segment);
+      size_.fetch_add(1, std::memory_order_relaxed);
     }
 
     V8_INLINE bool Pop(Segment** segment) {
-      base::LockGuard<base::Mutex> guard(&lock_);
+      base::MutexGuard guard(&lock_);
       if (top_ != nullptr) {
+        DCHECK_LT(0U, size_);
+        size_.fetch_sub(1, std::memory_order_relaxed);
         *segment = top_;
         set_top(top_->next());
         return true;
@@ -266,8 +312,16 @@ class Worklist {
       return base::AsAtomicPointer::Relaxed_Load(&top_) == nullptr;
     }
 
+    V8_INLINE size_t Size() const {
+      // It is safe to read |size_| without a lock since this variable is
+      // atomic, keeping in mind that threads may not immediately see the new
+      // value when it is updated.
+      return size_.load(std::memory_order_relaxed);
+    }
+
     void Clear() {
-      base::LockGuard<base::Mutex> guard(&lock_);
+      base::MutexGuard guard(&lock_);
+      size_.store(0, std::memory_order_relaxed);
       Segment* current = top_;
       while (current != nullptr) {
         Segment* tmp = current;
@@ -280,12 +334,15 @@ class Worklist {
     // See Worklist::Update.
     template <typename Callback>
     void Update(Callback callback) {
-      base::LockGuard<base::Mutex> guard(&lock_);
+      base::MutexGuard guard(&lock_);
       Segment* prev = nullptr;
       Segment* current = top_;
+      size_t num_deleted = 0;
       while (current != nullptr) {
         current->Update(callback);
         if (current->IsEmpty()) {
+          DCHECK_LT(0U, size_);
+          ++num_deleted;
           if (prev == nullptr) {
             top_ = current->next();
           } else {
@@ -299,37 +356,41 @@ class Worklist {
           current = current->next();
         }
       }
+      size_.fetch_sub(num_deleted, std::memory_order_relaxed);
     }
 
     // See Worklist::Iterate.
     template <typename Callback>
     void Iterate(Callback callback) {
-      base::LockGuard<base::Mutex> guard(&lock_);
+      base::MutexGuard guard(&lock_);
       for (Segment* current = top_; current != nullptr;
            current = current->next()) {
         current->Iterate(callback);
       }
     }
 
-    std::pair<Segment*, Segment*> Extract() {
+    void Merge(GlobalPool* other) {
       Segment* top = nullptr;
+      size_t other_size = 0;
       {
-        base::LockGuard<base::Mutex> guard(&lock_);
-        if (top_ == nullptr) return std::make_pair(nullptr, nullptr);
-        top = top_;
-        set_top(nullptr);
+        base::MutexGuard guard(&other->lock_);
+        if (!other->top_) return;
+        top = other->top_;
+        other_size = other->size_.load(std::memory_order_relaxed);
+        other->size_.store(0, std::memory_order_relaxed);
+        other->set_top(nullptr);
       }
-      Segment* end = top;
-      while (end->next() != nullptr) end = end->next();
-      return std::make_pair(top, end);
-    }
 
-    void MergeList(Segment* start, Segment* end) {
-      if (start == nullptr) return;
+      // It's safe to iterate through these segments because the top was
+      // extracted from |other|.
+      Segment* end = top;
+      while (end->next()) end = end->next();
+
       {
-        base::LockGuard<base::Mutex> guard(&lock_);
+        base::MutexGuard guard(&lock_);
+        size_.fetch_add(other_size, std::memory_order_relaxed);
         end->set_next(top_);
-        set_top(start);
+        set_top(top);
       }
     }
 
@@ -340,6 +401,7 @@ class Worklist {
 
     base::Mutex lock_;
     Segment* top_;
+    std::atomic<size_t> size_{0};
   };
 
   V8_INLINE Segment*& private_push_segment(int task_id) {

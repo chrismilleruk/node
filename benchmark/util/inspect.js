@@ -9,7 +9,7 @@ const opts = {
   none: undefined
 };
 const bench = common.createBenchmark(main, {
-  n: [2e6],
+  n: [2e4],
   method: [
     'Object',
     'Object_empty',
@@ -23,21 +23,21 @@ const bench = common.createBenchmark(main, {
     'Array',
     'TypedArray',
     'TypedArray_extra',
-    'Number'
+    'Number',
   ],
   option: Object.keys(opts)
 });
 
 function benchmark(n, obj, options) {
   bench.start();
-  for (var i = 0; i < n; i += 1) {
+  for (let i = 0; i < n; i += 1) {
     util.inspect(obj, options);
   }
   bench.end(n);
 }
 
 function main({ method, n, option }) {
-  var obj;
+  let obj;
   const options = opts[option];
   switch (method) {
     case 'Object':
@@ -81,7 +81,7 @@ function main({ method, n, option }) {
       benchmark(n, new Error('error'), options);
       break;
     case 'Array':
-      benchmark(n, Array(20).fill().map((_, i) => i), options);
+      benchmark(n, Array(50).fill().map((_, i) => i), options);
       break;
     case 'TypedArray':
       obj = new Uint8Array(Array(50).fill().map((_, i) => i));

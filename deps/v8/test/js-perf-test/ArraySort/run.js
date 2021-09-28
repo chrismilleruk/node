@@ -2,15 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-load('../base.js');
-load('sort.js')
-
-function benchy(name, test, testSetup) {
-  new BenchmarkSuite(name, [1000],
-      [
-        new Benchmark(name, false, false, 0, test, testSetup)
-      ]);
-}
+d8.file.execute('../base.js');
+d8.file.execute(arguments[0] + '.js')
 
 function PrintResult(name, result) {
   print(name + '-ArraySort(Score): ' + result);

@@ -26,11 +26,10 @@ if (!common.isWindows)
 
 const fs = require('fs');
 const path = require('path');
-const assert = require('assert');
 
 const tmpdir = require('../common/tmpdir');
 
-// make a path that will be at least 260 chars long.
+// Make a path that will be at least 260 chars long.
 const fileNameLen = Math.max(260 - tmpdir.path.length - 1, 1);
 const fileName = path.join(tmpdir.path, 'x'.repeat(fileNameLen));
 const fullPath = path.resolve(fileName);
@@ -42,14 +41,6 @@ console.log({
   fullPathLength: fullPath.length
 });
 
-fs.writeFile(fullPath, 'ok', common.mustCall(function(err) {
-  assert.ifError(err);
-
-  fs.stat(fullPath, common.mustCall(function(err, stats) {
-    assert.ifError(err);
-  }));
+fs.writeFile(fullPath, 'ok', common.mustSucceed(() => {
+  fs.stat(fullPath, common.mustSucceed());
 }));
-
-process.on('exit', function() {
-  fs.unlinkSync(fullPath);
-});

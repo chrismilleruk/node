@@ -25,9 +25,9 @@ const fs = require('fs');
 
 // Test that fs.readFile fails correctly on a non-existent file.
 
-// `fs.readFile('/')` does not fail on FreeBSD, because you can open and read
-// the directory there.
-if (common.isFreeBSD)
+// `fs.readFile('/')` does not fail on AIX and FreeBSD because you can open
+// and read the directory there.
+if (common.isAIX || common.isFreeBSD)
   common.skip('platform not supported.');
 
 const assert = require('assert');
@@ -37,31 +37,31 @@ const fixtures = require('../common/fixtures');
 function test(env, cb) {
   const filename = fixtures.path('test-fs-readfile-error.js');
   const execPath = `"${process.execPath}" "${filename}"`;
-  const options = { env: Object.assign({}, process.env, env) };
-  exec(execPath, options, common.mustCall((err, stdout, stderr) => {
+  const options = { env: { ...process.env, ...env } };
+  exec(execPath, options, (err, stdout, stderr) => {
     assert(err);
     assert.strictEqual(stdout, '');
     assert.notStrictEqual(stderr, '');
     cb(String(stderr));
-  }));
+  });
 }
 
 test({ NODE_DEBUG: '' }, common.mustCall((data) => {
-  assert(/EISDIR/.test(data));
-  assert(/test-fs-readfile-error/.test(data));
+  assert.match(data, /EISDIR/);
+  assert.match(data, /test-fs-readfile-error/);
 }));
 
 test({ NODE_DEBUG: 'fs' }, common.mustCall((data) => {
-  assert(/EISDIR/.test(data));
-  assert(/test-fs-readfile-error/.test(data));
+  assert.match(data, /EISDIR/);
+  assert.match(data, /test-fs-readfile-error/);
 }));
 
-common.expectsError(
+assert.throws(
   () => { fs.readFile(() => {}, common.mustNotCall()); },
   {
     code: 'ERR_INVALID_ARG_TYPE',
-    message: 'The "path" argument must be one of type string, Buffer, or URL.' +
-             ' Received type function',
-    type: TypeError
+    message: 'The "path" argument must be of type string or an instance of ' +
+             'Buffer or URL. Received type function ([Function (anonymous)])',
+    name: 'TypeError'
   }
 );

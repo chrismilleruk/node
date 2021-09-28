@@ -8,7 +8,7 @@ const http2 = require('http2');
 
 // Test that maxSessionMemory Caps work
 
-const largeBuffer = Buffer.alloc(1e6);
+const largeBuffer = Buffer.alloc(2e6);
 
 const server = http2.createServer({ maxSessionMemory: 1 });
 
@@ -33,7 +33,7 @@ server.listen(0, common.mustCall(() => {
       const req = client.request();
       req.on('error', common.expectsError({
         code: 'ERR_HTTP2_STREAM_ERROR',
-        type: Error,
+        name: 'Error',
         message: 'Stream closed with error code NGHTTP2_ENHANCE_YOUR_CALM'
       }));
       req.on('close', common.mustCall(() => {

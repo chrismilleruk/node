@@ -1,4 +1,15 @@
+env:
+  node: true
+  es6: true
+
 rules:
-  # Variables
-  # http://eslint.org/docs/rules/#variables
-  no-unused-vars: [error, { args: 'after-used' }]
+  camelcase:
+    - error
+    - properties: 'never'
+      ignoreDestructuring: true
+      allow: ['child_process']
+  no-unused-vars:
+    - error
+    - args: 'after-used'
+  prefer-arrow-callback: error
+  no-var: error

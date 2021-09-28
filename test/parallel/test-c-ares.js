@@ -23,8 +23,6 @@
 const common = require('../common');
 const assert = require('assert');
 
-common.crashOnUnhandledRejection();
-
 const dns = require('dns');
 const dnsPromises = dns.promises;
 
@@ -42,58 +40,54 @@ const dnsPromises = dns.promises;
   res = await dnsPromises.lookup('::1');
   assert.strictEqual(res.address, '::1');
   assert.strictEqual(res.family, 6);
-})();
+})().then(common.mustCall());
 
-// Try resolution without callback
-
-dns.lookup(null, common.mustCall((error, result, addressType) => {
-  assert.ifError(error);
-  assert.strictEqual(null, result);
-  assert.strictEqual(4, addressType);
+// Try resolution without hostname.
+dns.lookup(null, common.mustSucceed((result, addressType) => {
+  assert.strictEqual(result, null);
+  assert.strictEqual(addressType, 4);
 }));
 
-dns.lookup('127.0.0.1', common.mustCall((error, result, addressType) => {
-  assert.ifError(error);
-  assert.strictEqual('127.0.0.1', result);
-  assert.strictEqual(4, addressType);
+dns.lookup('127.0.0.1', common.mustSucceed((result, addressType) => {
+  assert.strictEqual(result, '127.0.0.1');
+  assert.strictEqual(addressType, 4);
 }));
 
-dns.lookup('::1', common.mustCall((error, result, addressType) => {
-  assert.ifError(error);
-  assert.strictEqual('::1', result);
-  assert.strictEqual(6, addressType);
+dns.lookup('::1', common.mustSucceed((result, addressType) => {
+  assert.strictEqual(result, '::1');
+  assert.strictEqual(addressType, 6);
 }));
 
 [
   // Try calling resolve with an unsupported type.
   'HI',
   // Try calling resolve with an unsupported type that's an object key
-  'toString'
+  'toString',
 ].forEach((val) => {
   const err = {
-    code: 'ERR_INVALID_OPT_VALUE',
-    type: TypeError,
-    message: `The value "${val}" is invalid for option "rrtype"`
+    code: 'ERR_INVALID_ARG_VALUE',
+    name: 'TypeError',
+    message: `The argument 'rrtype' is invalid. Received '${val}'`,
   };
 
-  common.expectsError(
+  assert.throws(
     () => dns.resolve('www.google.com', val),
     err
   );
 
-  common.expectsError(() => dnsPromises.resolve('www.google.com', val), err);
+  assert.throws(() => dnsPromises.resolve('www.google.com', val), err);
 });
 
 // Windows doesn't usually have an entry for localhost 127.0.0.1 in
 // C:\Windows\System32\drivers\etc\hosts
 // so we disable this test on Windows.
-if (!common.isWindows) {
-  dns.reverse('127.0.0.1', common.mustCall(function(error, domains) {
-    assert.ifError(error);
+// IBMi reports `ENOTFOUND` when get hostname by address 127.0.0.1
+if (!common.isWindows && !common.isIBMi) {
+  dns.reverse('127.0.0.1', common.mustSucceed((domains) => {
     assert.ok(Array.isArray(domains));
   }));
 
   (async function() {
     assert.ok(Array.isArray(await dnsPromises.reverse('127.0.0.1')));
-  })();
+  })().then(common.mustCall());
 }

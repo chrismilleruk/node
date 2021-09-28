@@ -1,3 +1,4 @@
+// Flags: --expose-internals
 'use strict';
 const common = require('../common');
 if (common.isWindows)
@@ -6,14 +7,15 @@ if (common.isWindows)
 const assert = require('assert');
 const net = require('net');
 const path = require('path');
-const { Pipe, constants: PipeConstants } = process.binding('pipe_wrap');
+const { internalBinding } = require('internal/test/binding');
+const { Pipe, constants: PipeConstants } = internalBinding('pipe_wrap');
 
 const tmpdir = require('../common/tmpdir');
 tmpdir.refresh();
 
 function testClients(getSocketOpt, getConnectOpt, getConnectCb) {
   const cloneOptions = (index) =>
-    Object.assign({}, getSocketOpt(index), getConnectOpt(index));
+    ({ ...getSocketOpt(index), ...getConnectOpt(index) });
   return [
     net.connect(cloneOptions(0), getConnectCb(0)),
     net.connect(cloneOptions(1))
@@ -23,7 +25,7 @@ function testClients(getSocketOpt, getConnectOpt, getConnectCb) {
       .on('connect', getConnectCb(3)),
     new net.Socket(getSocketOpt(4)).connect(getConnectOpt(4), getConnectCb(4)),
     new net.Socket(getSocketOpt(5)).connect(getConnectOpt(5))
-      .on('connect', getConnectCb(5))
+      .on('connect', getConnectCb(5)),
   ];
 }
 
@@ -68,7 +70,7 @@ const forAllClients = (cb) => common.mustCall(cb, CLIENT_VARIANTS);
   })
   .on('error', function(err) {
     console.error(err);
-    assert.fail(null, null, `[Pipe server]${err}`);
+    assert.fail(`[Pipe server]${err}`);
   })
   .listen({ path: serverPath }, common.mustCall(function serverOnListen() {
     const getSocketOpt = (index) => {
@@ -92,7 +94,7 @@ const forAllClients = (cb) => common.mustCall(cb, CLIENT_VARIANTS);
       console.error(`[Pipe]Sending data through fd ${oldHandle.fd}`);
       this.on('error', function(err) {
         console.error(err);
-        assert.fail(null, null, `[Pipe Client]${err}`);
+        assert.fail(`[Pipe Client]${err}`);
       });
     });
 

@@ -25,9 +25,9 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// Flags: --track-fields --track-double-fields --allow-natives-syntax
+// Flags: --allow-natives-syntax
 // Flags: --concurrent-recompilation --block-concurrent-recompilation
-// Flags: --no-always-opt
+// Flags: --no-always-opt --no-turbo-concurrent-get-property-access-info
 
 if (!%IsConcurrentRecompilationSupported()) {
   print("Concurrent recompilation is disabled. Skipping this test.");
@@ -43,10 +43,10 @@ function new_object() {
 
 function add_field(obj) {
   // Assign twice to make the field non-constant.
-  // TODO(ishell): update test once constant field tracking is done.
   obj.c = 0;
   obj.c = 3;
 }
+%PrepareFunctionForOptimization(add_field);
 var obj1 = new_object();
 var obj2 = new_object();
 add_field(obj1);
@@ -63,6 +63,13 @@ assertUnoptimized(add_field, "no sync");
 // Let concurrent recompilation proceed.
 %UnblockConcurrentRecompilation();
 // Sync with background thread to conclude optimization that bailed out.
-assertUnoptimized(add_field, "sync");
+if (!%IsDictPropertyConstTrackingEnabled()) {
+  // TODO(v8:11457) Currently, we cannot inline property stores if there is a
+  // dictionary mode prototype on the prototype chain. Therefore, if
+  // v8_dict_property_const_tracking is enabled, the optimized code only
+  // contains a call to the IC handler and doesn't get invalidated when the
+  // transition map changes.
+  assertUnoptimized(add_field, "sync");
+}
 // Clear type info for stress runs.
 %ClearFunctionFeedback(add_field);

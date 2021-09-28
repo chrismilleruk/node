@@ -23,10 +23,9 @@ try {
   throw e;
 }
 
-fs.readdir(tmpdir.path, 'ucs2', common.mustCall((err, list) => {
-  assert.ifError(err);
-  assert.strictEqual(1, list.length);
+fs.readdir(tmpdir.path, 'ucs2', common.mustSucceed((list) => {
+  assert.strictEqual(list.length, 1);
   const fn = list[0];
-  assert.deepStrictEqual(filebuff, Buffer.from(fn, 'ucs2'));
+  assert.deepStrictEqual(Buffer.from(fn, 'ucs2'), filebuff);
   assert.strictEqual(fn, filename);
 }));

@@ -21,12 +21,10 @@
 
 #include "async_wrap-inl.h"
 #include "env-inl.h"
-#include "util-inl.h"
-#include "node.h"
-#include "node_internals.h"
 #include "handle_wrap.h"
+#include "node.h"
+#include "node_external_reference.h"
 #include "string_bytes.h"
-
 
 namespace node {
 
@@ -52,24 +50,27 @@ class FSEventWrap: public HandleWrap {
  public:
   static void Initialize(Local<Object> target,
                          Local<Value> unused,
-                         Local<Context> context);
+                         Local<Context> context,
+                         void* priv);
+  static void RegisterExternalReferences(ExternalReferenceRegistry* registry);
   static void New(const FunctionCallbackInfo<Value>& args);
   static void Start(const FunctionCallbackInfo<Value>& args);
-  static void Close(const FunctionCallbackInfo<Value>& args);
   static void GetInitialized(const FunctionCallbackInfo<Value>& args);
-  size_t self_size() const override { return sizeof(*this); }
+
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(FSEventWrap)
+  SET_SELF_SIZE(FSEventWrap)
 
  private:
   static const encoding kDefaultEncoding = UTF8;
 
   FSEventWrap(Environment* env, Local<Object> object);
-  ~FSEventWrap() override;
+  ~FSEventWrap() override = default;
 
   static void OnEvent(uv_fs_event_t* handle, const char* filename, int events,
     int status);
 
   uv_fs_event_t handle_;
-  bool initialized_ = false;
   enum encoding encoding_ = kDefaultEncoding;
 };
 
@@ -83,44 +84,46 @@ FSEventWrap::FSEventWrap(Environment* env, Local<Object> object)
 }
 
 
-FSEventWrap::~FSEventWrap() {
-}
-
 void FSEventWrap::GetInitialized(const FunctionCallbackInfo<Value>& args) {
   FSEventWrap* wrap = Unwrap<FSEventWrap>(args.This());
   CHECK_NOT_NULL(wrap);
-  args.GetReturnValue().Set(wrap->initialized_);
+  args.GetReturnValue().Set(!wrap->IsHandleClosing());
 }
 
 void FSEventWrap::Initialize(Local<Object> target,
                              Local<Value> unused,
-                             Local<Context> context) {
+                             Local<Context> context,
+                             void* priv) {
   Environment* env = Environment::GetCurrent(context);
 
-  auto fsevent_string = FIXED_ONE_BYTE_STRING(env->isolate(), "FSEvent");
   Local<FunctionTemplate> t = env->NewFunctionTemplate(New);
-  t->InstanceTemplate()->SetInternalFieldCount(1);
-  t->SetClassName(fsevent_string);
+  t->InstanceTemplate()->SetInternalFieldCount(
+      FSEventWrap::kInternalFieldCount);
 
-  AsyncWrap::AddWrapMethods(env, t);
+  t->Inherit(HandleWrap::GetConstructorTemplate(env));
   env->SetProtoMethod(t, "start", Start);
-  env->SetProtoMethod(t, "close", Close);
 
   Local<FunctionTemplate> get_initialized_templ =
       FunctionTemplate::New(env->isolate(),
                             GetInitialized,
-                            env->as_external(),
+                            Local<Value>(),
                             Signature::New(env->isolate(), t));
 
   t->PrototypeTemplate()->SetAccessorProperty(
       FIXED_ONE_BYTE_STRING(env->isolate(), "initialized"),
       get_initialized_templ,
       Local<FunctionTemplate>(),
-      static_cast<PropertyAttribute>(ReadOnly | DontDelete | v8::DontEnum));
+      static_cast<PropertyAttribute>(ReadOnly | DontDelete | DontEnum));
 
-  target->Set(fsevent_string, t->GetFunction());
+  env->SetConstructorFunction(target, "FSEvent", t);
 }
 
+void FSEventWrap::RegisterExternalReferences(
+    ExternalReferenceRegistry* registry) {
+  registry->Register(New);
+  registry->Register(Start);
+  registry->Register(GetInitialized);
+}
 
 void FSEventWrap::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args.IsConstructCall());
@@ -134,7 +137,7 @@ void FSEventWrap::Start(const FunctionCallbackInfo<Value>& args) {
 
   FSEventWrap* wrap = Unwrap<FSEventWrap>(args.This());
   CHECK_NOT_NULL(wrap);
-  CHECK(!wrap->initialized_);
+  CHECK(wrap->IsHandleClosing());  // Check that Start() has not been called.
 
   const int argc = args.Length();
   CHECK_GE(argc, 4);
@@ -155,7 +158,6 @@ void FSEventWrap::Start(const FunctionCallbackInfo<Value>& args) {
 
   err = uv_fs_event_start(&wrap->handle_, OnEvent, *path, flags);
   wrap->MarkAsInitialized();
-  wrap->initialized_ = true;
 
   if (err != 0) {
     FSEventWrap::Close(args);
@@ -230,17 +232,9 @@ void FSEventWrap::OnEvent(uv_fs_event_t* handle, const char* filename,
   wrap->MakeCallback(env->onchange_string(), arraysize(argv), argv);
 }
 
-
-void FSEventWrap::Close(const FunctionCallbackInfo<Value>& args) {
-  FSEventWrap* wrap = Unwrap<FSEventWrap>(args.Holder());
-  CHECK_NOT_NULL(wrap);
-  CHECK(wrap->initialized_);
-
-  wrap->initialized_ = false;
-  HandleWrap::Close(args);
-}
-
 }  // anonymous namespace
 }  // namespace node
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(fs_event_wrap, node::FSEventWrap::Initialize)
+NODE_MODULE_CONTEXT_AWARE_INTERNAL(fs_event_wrap, node::FSEventWrap::Initialize)
+NODE_MODULE_EXTERNAL_REFERENCE(fs_event_wrap,
+                               node::FSEventWrap::RegisterExternalReferences)

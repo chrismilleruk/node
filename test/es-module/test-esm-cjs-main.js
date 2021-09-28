@@ -7,21 +7,15 @@ const assert = require('assert');
 
 const entry = fixtures.path('/es-modules/cjs.js');
 
-const child = spawn(process.execPath, ['--experimental-modules', entry]);
-let experimentalWarning = false;
-let validatedExecution = false;
-child.stderr.on('data', (data) => {
-  if (!experimentalWarning) {
-    experimentalWarning = true;
-    return;
-  }
-  throw new Error(data.toString());
-});
+const child = spawn(process.execPath, [entry]);
+child.stderr.setEncoding('utf8');
+let stdout = '';
+child.stdout.setEncoding('utf8');
 child.stdout.on('data', (data) => {
-  assert.strictEqual(data.toString(), 'executed\n');
-  validatedExecution = true;
+  stdout += data;
 });
-child.on('close', common.mustCall((code, stdout) => {
-  assert.strictEqual(validatedExecution, true);
+child.on('close', common.mustCall((code, signal) => {
   assert.strictEqual(code, 0);
+  assert.strictEqual(signal, null);
+  assert.strictEqual(stdout, 'executed\n');
 }));

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --harmony-regexp-named-captures --allow-natives-syntax
+// Flags: --allow-natives-syntax
 
 // Malformed named captures.
 assertThrows("/(?<>a)/u", SyntaxError);  // Empty name.
@@ -417,6 +417,15 @@ function toSlowMode(re) {
   assertEquals("cd", "abcd".replace(re, "$<42$1>"));
   assertEquals("cd", "abcd".replace(re, "$<fth>"));
   assertEquals("cd", "abcd".replace(re, "$<$1>"));
+}
+
+// Named captures are ordered by capture index on the groups object.
+// https://crbug.com/v8/9822
+
+{
+  const r = /(?<BKey>.+)\s(?<AKey>.+)/;
+  const s = 'example string';
+  assertArrayEquals(["BKey", "AKey"], Object.keys(r.exec(s).groups));
 }
 
 // Tests for 'groups' semantics on the regexp result object.

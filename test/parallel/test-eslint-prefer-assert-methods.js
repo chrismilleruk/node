@@ -1,6 +1,8 @@
 'use strict';
 
 const common = require('../common');
+if (!common.hasCrypto)
+  common.skip('missing crypto');
 
 common.skipIfEslintMissing();
 
@@ -19,7 +21,7 @@ new RuleTester().run('prefer-assert-methods', rule, {
     'assert(foo != bar && baz);',
     'assert.ok(foo);',
     'assert.ok(foo != bar);',
-    'assert.ok(foo === bar && baz);'
+    'assert.ok(foo === bar && baz);',
   ],
   invalid: [
     {
@@ -49,6 +51,6 @@ new RuleTester().run('prefer-assert-methods', rule, {
         message: "'assert.notStrictEqual' should be used instead of '!=='"
       }],
       output: 'assert.notStrictEqual(foo, bar);'
-    }
+    },
   ]
 });

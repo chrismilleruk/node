@@ -44,19 +44,16 @@ file
   .on('open', function(fd) {
     console.error('open!');
     callbacks.open++;
-    assert.strictEqual('number', typeof fd);
-  })
-  .on('error', function(err) {
-    throw err;
+    assert.strictEqual(typeof fd, 'number');
   })
   .on('drain', function() {
     console.error('drain!', callbacks.drain);
     callbacks.drain++;
     if (callbacks.drain === -1) {
-      assert.strictEqual(EXPECTED, fs.readFileSync(fn, 'utf8'));
+      assert.strictEqual(fs.readFileSync(fn, 'utf8'), EXPECTED);
       file.write(EXPECTED);
     } else if (callbacks.drain === 0) {
-      assert.strictEqual(EXPECTED + EXPECTED, fs.readFileSync(fn, 'utf8'));
+      assert.strictEqual(fs.readFileSync(fn, 'utf8'), EXPECTED + EXPECTED);
       file.end();
     }
   })
@@ -65,17 +62,12 @@ file
     assert.strictEqual(file.bytesWritten, EXPECTED.length * 2);
 
     callbacks.close++;
-    common.expectsError(
-      () => {
-        console.error('write after end should not be allowed');
-        file.write('should not work anymore');
-      },
-      {
-        code: 'ERR_STREAM_WRITE_AFTER_END',
-        type: Error,
-        message: 'write after end'
-      }
-    );
+    file.write('should not work anymore', common.expectsError({
+      code: 'ERR_STREAM_WRITE_AFTER_END',
+      name: 'Error',
+      message: 'write after end'
+    }));
+    file.on('error', common.mustNotCall());
 
     fs.unlinkSync(fn);
   });
@@ -86,7 +78,7 @@ for (let i = 0; i < 11; i++) {
 
 process.on('exit', function() {
   for (const k in callbacks) {
-    assert.strictEqual(0, callbacks[k], `${k} count off by ${callbacks[k]}`);
+    assert.strictEqual(callbacks[k], 0, `${k} count off by ${callbacks[k]}`);
   }
   console.log('ok');
 });

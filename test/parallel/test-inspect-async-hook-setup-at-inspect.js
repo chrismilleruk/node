@@ -1,9 +1,7 @@
-// Flags: --expose-internals
 'use strict';
 const common = require('../common');
 common.skipIfInspectorDisabled();
 common.skipIf32Bits();
-common.crashOnUnhandledRejection();
 const { NodeInstance } = require('../common/inspector-helper.js');
 const assert = require('assert');
 
@@ -32,7 +30,7 @@ async function setupTimeoutForStackTrace(session) {
   await session.send([
     { 'method': 'Runtime.evaluate',
       'params': { expression: 'setupTimeoutWithBreak()' } },
-    { 'method': 'Debugger.resume' }
+    { 'method': 'Debugger.resume' },
   ]);
 }
 
@@ -56,7 +54,7 @@ async function runTests() {
       'params': { 'maxDepth': 10 } },
     { 'method': 'Debugger.setBlackboxPatterns',
       'params': { 'patterns': [] } },
-    { 'method': 'Runtime.runIfWaitingForDebugger' }
+    { 'method': 'Runtime.runIfWaitingForDebugger' },
   ]);
 
   await waitForInitialSetup(session);

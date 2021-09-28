@@ -6,19 +6,20 @@ if (!common.hasIntl) {
 }
 
 const fixtures = require('../common/fixtures');
-const { URL, URLSearchParams } = require('url');
 const { test, assert_equals, assert_true, assert_throws } =
-  require('../common/wpt');
+  require('../common/wpt').harness;
 
 const request = {
-  response: require(fixtures.path('url-tests'))
+  response: require(
+    fixtures.path('wpt', 'url', 'resources', 'urltestdata.json')
+  )
 };
 
-/* The following tests are copied from WPT. Modifications to them should be
-   upstreamed first. Refs:
-   https://github.com/w3c/web-platform-tests/blob/8791bed/url/url-constructor.html
-   License: http://www.w3.org/Consortium/Legal/2008/04-testsuite-copyright.html
-*/
+// The following tests are copied from WPT. Modifications to them should be
+// upstreamed first.
+// Refs: https://github.com/w3c/web-platform-tests/blob/8791bed/url/url-constructor.html
+// License: http://www.w3.org/Consortium/Legal/2008/04-testsuite-copyright.html
+
 /* eslint-disable */
 function runURLConstructorTests() {
   // var setup = async_test("Loading data…")

@@ -1,15 +1,17 @@
 'use strict';
-const common = require('../common');
+require('../common');
+const ArrayStream = require('../common/arraystream');
 const fixtures = require('../common/fixtures');
 const assert = require('assert');
 const repl = require('repl');
 
+const stackRegExp = /(REPL\d+):[0-9]+:[0-9]+/g;
 
 function run({ command, expected }) {
   let accum = '';
 
-  const inputStream = new common.ArrayStream();
-  const outputStream = new common.ArrayStream();
+  const inputStream = new ArrayStream();
+  const outputStream = new ArrayStream();
 
   outputStream.write = (data) => accum += data.replace('\r', '');
 
@@ -22,7 +24,10 @@ function run({ command, expected }) {
   });
 
   r.write(`${command}\n`);
-  assert.strictEqual(accum, expected);
+  assert.strictEqual(
+    accum.replace(stackRegExp, '$1:*:*'),
+    expected.replace(stackRegExp, '$1:*:*')
+  );
   r.close();
 }
 
@@ -39,32 +44,31 @@ process.on('uncaughtException', (e) => {
   throw e;
 });
 
-process.on('exit', () => (Error.prepareStackTrace = origPrepareStackTrace));
-
 const tests = [
   {
     // test .load for a file that throws
     command: `.load ${fixtures.path('repl-pretty-stack.js')}`,
-    expected: 'Error: Whoops!--->\nrepl:9:24--->\nd (repl:12:3)--->\nc ' +
-              '(repl:9:3)--->\nb (repl:6:3)--->\na (repl:3:3)\n'
+    expected: 'Uncaught Error: Whoops!--->\nREPL1:*:*--->\nd (REPL1:*:*)' +
+              '--->\nc (REPL1:*:*)--->\nb (REPL1:*:*)--->\na (REPL1:*:*)\n'
   },
   {
     command: 'let x y;',
-    expected: 'let x y;\n      ^\n\nSyntaxError: Unexpected identifier\n'
+    expected: 'let x y;\n      ^\n\n' +
+              'Uncaught SyntaxError: Unexpected identifier\n'
   },
   {
     command: 'throw new Error(\'Whoops!\')',
-    expected: 'Error: Whoops!\n'
+    expected: 'Uncaught Error: Whoops!\n'
   },
   {
     command: 'foo = bar;',
-    expected: 'ReferenceError: bar is not defined\n'
+    expected: 'Uncaught ReferenceError: bar is not defined\n'
   },
   // test anonymous IIFE
   {
     command: '(function() { throw new Error(\'Whoops!\'); })()',
-    expected: 'Error: Whoops!--->\nrepl:1:21\n'
-  }
+    expected: 'Uncaught Error: Whoops!--->\nREPL5:*:*\n'
+  },
 ];
 
 tests.forEach(run);

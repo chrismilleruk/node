@@ -1,6 +1,8 @@
 'use strict';
 
 const common = require('../common');
+if (!common.hasCrypto)
+  common.skip('missing crypto');
 
 common.skipIfEslintMissing();
 
@@ -12,7 +14,7 @@ new RuleTester().run('prefer-assert-iferror', rule, {
     'assert.ifError(err);',
     'if (err) throw somethingElse;',
     'throw err;',
-    'if (err) { throw somethingElse; }'
+    'if (err) { throw somethingElse; }',
   ],
   invalid: [
     {
@@ -28,6 +30,6 @@ new RuleTester().run('prefer-assert-iferror', rule, {
       errors: [{ message: 'Use assert.ifError(error) instead.' }],
       output: 'require("assert");\n' +
               'assert.ifError(error);'
-    }
+    },
   ]
 });

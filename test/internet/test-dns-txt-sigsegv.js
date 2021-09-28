@@ -4,12 +4,10 @@ const assert = require('assert');
 const dns = require('dns');
 const dnsPromises = dns.promises;
 
-common.crashOnUnhandledRejection();
-
 (async function() {
   const result = await dnsPromises.resolveTxt('www.microsoft.com');
   assert.strictEqual(result.length, 0);
-})();
+})().then(common.mustCall());
 
 dns.resolveTxt('www.microsoft.com', function(err, records) {
   assert.strictEqual(err, null);

@@ -4,35 +4,48 @@
 
 'use strict';
 
-const details_selection_template =
-    document.currentScript.ownerDocument.querySelector(
-        '#details-selection-template');
+import {CATEGORIES, CATEGORY_NAMES} from './categories.js';
 
-class DetailsSelection extends HTMLElement {
+export const VIEW_BY_INSTANCE_TYPE = 'by-instance-type';
+export const VIEW_BY_INSTANCE_CATEGORY = 'by-instance-category';
+export const VIEW_BY_FIELD_TYPE = 'by-field-type';
+
+defineCustomElement('details-selection', (templateText) =>
+ class DetailsSelection extends HTMLElement {
   constructor() {
     super();
     const shadowRoot = this.attachShadow({mode: 'open'});
-    shadowRoot.appendChild(details_selection_template.content.cloneNode(true));
+    shadowRoot.innerHTML = templateText;
     this.isolateSelect.addEventListener(
         'change', e => this.handleIsolateChange(e));
+    this.dataViewSelect.addEventListener(
+        'change', e => this.notifySelectionChanged(e));
     this.datasetSelect.addEventListener(
         'change', e => this.notifySelectionChanged(e));
     this.gcSelect.addEventListener(
-        'change', e => this.notifySelectionChanged(e));
+      'change', e => this.notifySelectionChanged(e));
     this.$('#csv-export-btn')
         .addEventListener('click', e => this.exportCurrentSelection(e));
-    this.$('#merge-categories')
-        .addEventListener('change', e => this.notifySelectionChanged(e));
     this.$('#category-filter-btn')
         .addEventListener('click', e => this.filterCurrentSelection(e));
     this.$('#category-auto-filter-btn')
         .addEventListener('click', e => this.filterTop20Categories(e));
+    this._data = undefined;
+    this.selection = undefined;
   }
 
   connectedCallback() {
     for (let category of CATEGORIES.keys()) {
       this.$('#categories').appendChild(this.buildCategory(category));
     }
+  }
+
+  dataChanged() {
+    this.selection = {categories: {}};
+    this.resetUI(true);
+    this.populateIsolateSelect();
+    this.handleIsolateChange();
+    this.$('#dataSelectionSection').style.display = 'block';
   }
 
   set data(value) {
@@ -62,6 +75,10 @@ class DetailsSelection extends HTMLElement {
     return this.shadowRoot.querySelectorAll(query);
   }
 
+  get dataViewSelect() {
+    return this.$('#data-view-select');
+  }
+
   get datasetSelect() {
     return this.$('#dataset-select');
   }
@@ -78,43 +95,58 @@ class DetailsSelection extends HTMLElement {
     const div = document.createElement('div');
     div.id = name;
     div.classList.add('box');
-    const ul = document.createElement('ul');
+
+    let ul = document.createElement('ul');
+    ul.className = 'categoryLabels'
+    {
+      const name_li = document.createElement('li');
+      name_li.textContent = CATEGORY_NAMES.get(name);
+      ul.appendChild(name_li);
+
+      const percent_li = document.createElement('li');
+      percent_li.textContent = '0%';
+      percent_li.id = name + 'PercentContent';
+      ul.appendChild(percent_li);
+    }
     div.appendChild(ul);
-    const name_li = document.createElement('li');
-    ul.appendChild(name_li);
-    name_li.innerHTML = CATEGORY_NAMES.get(name);
-    const percent_li = document.createElement('li');
-    ul.appendChild(percent_li);
-    percent_li.innerHTML = '0%';
-    percent_li.id = name + 'PercentContent';
-    const all_li = document.createElement('li');
-    ul.appendChild(all_li);
-    const all_button = document.createElement('button');
-    all_li.appendChild(all_button);
-    all_button.innerHTML = 'All';
-    all_button.addEventListener('click', e => this.selectCategory(name));
-    const none_li = document.createElement('li');
-    ul.appendChild(none_li);
-    const none_button = document.createElement('button');
-    none_li.appendChild(none_button);
-    none_button.innerHTML = 'None';
-    none_button.addEventListener('click', e => this.unselectCategory(name));
+
+    ul = document.createElement('ul');
+    ul.className = 'categorySelectionButtons'
+    {
+      const all_li = document.createElement('li');
+      const all_button = document.createElement('button');
+      all_button.textContent = 'All';
+      all_button.addEventListener('click', e => this.selectCategory(name));
+      all_li.appendChild(all_button);
+      ul.appendChild(all_li);
+
+      const top_li = document.createElement('li');
+      const top_button = document.createElement('button');
+      top_button.textContent = 'Top 10';
+      top_button.addEventListener(
+          'click', e => this.selectCategoryTopEntries(name));
+      top_li.appendChild(top_button);
+      ul.appendChild(top_li);
+
+      const none_li = document.createElement('li');
+      const none_button = document.createElement('button');
+      none_button.textContent = 'None';
+      none_button.addEventListener('click', e => this.unselectCategory(name));
+      none_li.appendChild(none_button);
+      ul.appendChild(none_li);
+    }
+    div.appendChild(ul);
+
     const innerDiv = document.createElement('div');
-    div.appendChild(innerDiv);
     innerDiv.id = name + 'Content';
+    innerDiv.className = 'categoryContent';
+    div.appendChild(innerDiv);
+
     const percentDiv = document.createElement('div');
-    div.appendChild(percentDiv);
     percentDiv.className = 'percentBackground';
     percentDiv.id = name + 'PercentBackground';
+    div.appendChild(percentDiv);
     return div;
-  }
-
-  dataChanged() {
-    this.selection = {categories: {}};
-    this.resetUI(true);
-    this.populateIsolateSelect();
-    this.handleIsolateChange();
-    this.$('#dataSelectionSection').style.display = 'block';
   }
 
   populateIsolateSelect() {
@@ -128,6 +160,7 @@ class DetailsSelection extends HTMLElement {
   resetUI(resetIsolateSelect) {
     if (resetIsolateSelect) removeAllChildren(this.isolateSelect);
 
+    removeAllChildren(this.dataViewSelect);
     removeAllChildren(this.datasetSelect);
     removeAllChildren(this.gcSelect);
     this.clearCategories();
@@ -149,6 +182,13 @@ class DetailsSelection extends HTMLElement {
     }
     this.resetUI(false);
     this.populateSelect(
+        '#data-view-select', [
+          [VIEW_BY_INSTANCE_TYPE, 'Selected instance types'],
+          [VIEW_BY_INSTANCE_CATEGORY, 'Selected type categories'],
+          [VIEW_BY_FIELD_TYPE, 'Field type statistics']
+        ],
+        (key, label) => label, VIEW_BY_INSTANCE_TYPE);
+    this.populateSelect(
         '#dataset-select', this.selectedIsolate.data_sets.entries(), null,
         'live');
     this.populateSelect(
@@ -168,14 +208,19 @@ class DetailsSelection extends HTMLElement {
   notifySelectionChanged(e) {
     if (!this.selection.isolate) return;
 
+    this.selection.data_view = this.dataViewSelect.value;
     this.selection.categories = {};
-    for (let category of CATEGORIES.keys()) {
-      const selected = this.selectedInCategory(category);
-      if (selected.length > 0) this.selection.categories[category] = selected;
+    if (this.selection.data_view === VIEW_BY_FIELD_TYPE) {
+      this.$('#categories').style.display = 'none';
+    } else {
+      for (let category of CATEGORIES.keys()) {
+        const selected = this.selectedInCategory(category);
+        if (selected.length > 0) this.selection.categories[category] = selected;
+      }
+      this.$('#categories').style.display = 'block';
     }
     this.selection.category_names = CATEGORY_NAMES;
     this.selection.data_set = this.datasetSelect.value;
-    this.selection.merge_categories = this.$('#merge-categories').checked;
     this.selection.gc = this.gcSelect.value;
     this.setButtonState(false);
     this.updatePercentagesInCategory();
@@ -239,7 +284,7 @@ class DetailsSelection extends HTMLElement {
     });
     Object.entries(overalls).forEach(([category, category_overall]) => {
       let percents = category_overall / overall * 100;
-      this.$(`#${category}PercentContent`).innerHTML =
+      this.$(`#${category}PercentContent`).textContent =
           `${percents.toFixed(1)}%`;
       this.$('#' + category + 'PercentBackground').style.left = percents + '%';
     });
@@ -304,7 +349,7 @@ class DetailsSelection extends HTMLElement {
 
   populateCategories() {
     this.clearCategories();
-    const categories = {};
+    const categories = {__proto__:null};
     for (let cat of CATEGORIES.keys()) {
       categories[cat] = [];
     }
@@ -331,6 +376,23 @@ class DetailsSelection extends HTMLElement {
   selectCategory(category) {
     this.querySelectorAll('input[name=' + category + 'Checkbox]')
         .forEach(checkbox => checkbox.checked = true);
+    this.notifySelectionChanged();
+  }
+
+  selectCategoryTopEntries(category) {
+    // unselect all checkboxes in this category.
+    this.querySelectorAll('input[name=' + category + 'Checkbox]')
+        .forEach(checkbox => checkbox.checked = false);
+    const data = this.selectedData.instance_type_data;
+
+    // Get the max values for instance_types in this category
+    const categoryInstanceTypes = Array.from(CATEGORIES.get(category));
+    categoryInstanceTypes.filter(each => each in data)
+      .sort((a,b) => {
+        return data[b].overall - data[a].overall;
+      }).slice(0, 10).forEach((category) => {
+        this.$('#' + category + 'Checkbox').checked = true;
+      });
     this.notifySelectionChanged();
   }
 
@@ -382,6 +444,4 @@ class DetailsSelection extends HTMLElement {
     link.click();
     this.shadowRoot.removeChild(link);
   }
-}
-
-customElements.define('details-selection', DetailsSelection);
+});

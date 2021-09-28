@@ -1,4 +1,4 @@
-# Using the internal/errors.js Module
+# Using the internal/errors.js module
 
 ## What is internal/errors.js
 
@@ -14,7 +14,7 @@ in the ecosystem. For that reason, Node.js has considered error message changes
 to be breaking changes. By providing a permanent identifier for a specific
 error, we reduce the need for userland code to inspect error messages.
 
-*Note*: Switching an existing error to use the `internal/errors` module must be
+Switching an existing error to use the `internal/errors` module must be
 considered a `semver-major` change.
 
 ## Using internal/errors.js
@@ -111,8 +111,8 @@ assert.strictEqual(
 ```
 
 In addition, there should also be tests which validate the use of the
-error based on where it is used in the codebase.  For these tests, except in
-special cases, they should only validate that the expected code is received
+error based on where it is used in the codebase.  If the error message is
+static, these tests should only validate that the expected code is received
 and NOT validate the message.  This will reduce the amount of test change
 required when the message for an error changes.
 

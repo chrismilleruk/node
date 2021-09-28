@@ -71,9 +71,8 @@ fs.truncateSync(fd);
 fs.closeSync(fd);
 
 // Async tests
-testTruncate(common.mustCall(function(er) {
-  assert.ifError(er);
-  testFtruncate(common.mustCall(assert.ifError));
+testTruncate(common.mustSucceed(() => {
+  testFtruncate(common.mustSucceed());
 }));
 
 function testTruncate(cb) {
@@ -147,7 +146,7 @@ function testFtruncate(cb) {
   const file2 = path.resolve(tmp, 'truncate-file-2.txt');
   fs.writeFileSync(file2, 'Hi');
   const fd = fs.openSync(file2, 'r+');
-  process.on('exit', () => fs.closeSync(fd));
+  process.on('beforeExit', () => fs.closeSync(fd));
   fs.ftruncateSync(fd, 4);
   assert(fs.readFileSync(file2).equals(Buffer.from('Hi\u0000\u0000')));
 }
@@ -155,8 +154,7 @@ function testFtruncate(cb) {
 {
   const file3 = path.resolve(tmp, 'truncate-file-3.txt');
   fs.writeFileSync(file3, 'Hi');
-  fs.truncate(file3, 4, common.mustCall(function(err) {
-    assert.ifError(err);
+  fs.truncate(file3, 4, common.mustSucceed(() => {
     assert(fs.readFileSync(file3).equals(Buffer.from('Hi\u0000\u0000')));
   }));
 }
@@ -165,9 +163,8 @@ function testFtruncate(cb) {
   const file4 = path.resolve(tmp, 'truncate-file-4.txt');
   fs.writeFileSync(file4, 'Hi');
   const fd = fs.openSync(file4, 'r+');
-  process.on('exit', () => fs.closeSync(fd));
-  fs.ftruncate(fd, 4, common.mustCall(function(err) {
-    assert.ifError(err);
+  process.on('beforeExit', () => fs.closeSync(fd));
+  fs.ftruncate(fd, 4, common.mustSucceed(() => {
     assert(fs.readFileSync(file4).equals(Buffer.from('Hi\u0000\u0000')));
   }));
 }
@@ -176,16 +173,16 @@ function testFtruncate(cb) {
   const file5 = path.resolve(tmp, 'truncate-file-5.txt');
   fs.writeFileSync(file5, 'Hi');
   const fd = fs.openSync(file5, 'r+');
-  process.on('exit', () => fs.closeSync(fd));
+  process.on('beforeExit', () => fs.closeSync(fd));
 
   ['', false, null, {}, []].forEach((input) => {
+    const received = common.invalidArgTypeHelper(input);
     assert.throws(
       () => fs.truncate(file5, input, common.mustNotCall()),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        name: 'TypeError [ERR_INVALID_ARG_TYPE]',
-        message: 'The "len" argument must be of type number. ' +
-                 `Received type ${typeof input}`
+        name: 'TypeError',
+        message: `The "len" argument must be of type number.${received}`
       }
     );
 
@@ -193,9 +190,8 @@ function testFtruncate(cb) {
       () => fs.ftruncate(fd, input),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        name: 'TypeError [ERR_INVALID_ARG_TYPE]',
-        message: 'The "len" argument must be of type number. ' +
-                 `Received type ${typeof input}`
+        name: 'TypeError',
+        message: `The "len" argument must be of type number.${received}`
       }
     );
   });
@@ -205,7 +201,7 @@ function testFtruncate(cb) {
       () => fs.truncate(file5, input),
       {
         code: 'ERR_OUT_OF_RANGE',
-        name: 'RangeError [ERR_OUT_OF_RANGE]',
+        name: 'RangeError',
         message: 'The value of "len" is out of range. It must be ' +
                   `an integer. Received ${input}`
       }
@@ -215,15 +211,14 @@ function testFtruncate(cb) {
       () => fs.ftruncate(fd, input),
       {
         code: 'ERR_OUT_OF_RANGE',
-        name: 'RangeError [ERR_OUT_OF_RANGE]',
+        name: 'RangeError',
         message: 'The value of "len" is out of range. It must be ' +
                   `an integer. Received ${input}`
       }
     );
   });
 
-  fs.ftruncate(fd, undefined, common.mustCall(function(err) {
-    assert.ifError(err);
+  fs.ftruncate(fd, undefined, common.mustSucceed(() => {
     assert(fs.readFileSync(file5).equals(Buffer.from('')));
   }));
 }
@@ -232,12 +227,45 @@ function testFtruncate(cb) {
   const file6 = path.resolve(tmp, 'truncate-file-6.txt');
   fs.writeFileSync(file6, 'Hi');
   const fd = fs.openSync(file6, 'r+');
-  process.on('exit', () => fs.closeSync(fd));
-  fs.ftruncate(fd, -1, common.mustCall(function(err) {
-    assert.ifError(err);
+  process.on('beforeExit', () => fs.closeSync(fd));
+  fs.ftruncate(fd, -1, common.mustSucceed(() => {
     assert(fs.readFileSync(file6).equals(Buffer.from('')));
   }));
 }
+
+{
+  const file7 = path.resolve(tmp, 'truncate-file-7.txt');
+  fs.writeFileSync(file7, 'Hi');
+  fs.truncate(file7, undefined, common.mustSucceed(() => {
+    assert(fs.readFileSync(file7).equals(Buffer.from('')));
+  }));
+}
+
+{
+  const file8 = path.resolve(tmp, 'non-existent-truncate-file.txt');
+  const validateError = (err) => {
+    assert.strictEqual(file8, err.path);
+    assert.strictEqual(
+      err.message,
+      `ENOENT: no such file or directory, open '${file8}'`);
+    assert.strictEqual(err.code, 'ENOENT');
+    assert.strictEqual(err.syscall, 'open');
+    return true;
+  };
+  fs.truncate(file8, 0, common.mustCall(validateError));
+}
+
+['', false, null, {}, []].forEach((input) => {
+  assert.throws(
+    () => fs.truncate('/foo/bar', input),
+    {
+      code: 'ERR_INVALID_ARG_TYPE',
+      name: 'TypeError',
+      message: 'The "len" argument must be of type number.' +
+               common.invalidArgTypeHelper(input)
+    }
+  );
+});
 
 ['', false, null, undefined, {}, []].forEach((input) => {
   ['ftruncate', 'ftruncateSync'].forEach((fnName) => {
@@ -245,10 +273,26 @@ function testFtruncate(cb) {
       () => fs[fnName](input),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        name: 'TypeError [ERR_INVALID_ARG_TYPE]',
-        message: 'The "fd" argument must be of type number. ' +
-                 `Received type ${typeof input}`
+        name: 'TypeError',
+        message: 'The "fd" argument must be of type number.' +
+                 common.invalidArgTypeHelper(input)
       }
     );
   });
 });
+
+{
+  const file1 = path.resolve(tmp, 'truncate-file-1.txt');
+  fs.writeFileSync(file1, 'Hi');
+  fs.truncateSync(file1, -1);  // Negative coerced to 0, No error.
+  assert(fs.readFileSync(file1).equals(Buffer.alloc(0)));
+}
+
+{
+  const file1 = path.resolve(tmp, 'truncate-file-2.txt');
+  fs.writeFileSync(file1, 'Hi');
+  // Negative coerced to 0, No error.
+  fs.truncate(file1, -1, common.mustSucceed(() => {
+    assert(fs.readFileSync(file1).equals(Buffer.alloc(0)));
+  }));
+}

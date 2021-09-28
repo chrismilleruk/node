@@ -6,8 +6,6 @@ const async_hooks = require('async_hooks');
 if (!common.isMainThread)
   common.skip('Worker bootstrapping works differently -> different async IDs');
 
-common.crashOnUnhandledRejection();
-
 const promiseAsyncIds = [];
 
 async_hooks.createHook({
@@ -15,8 +13,8 @@ async_hooks.createHook({
     if (type === 'PROMISE') {
       // Check that the last known Promise is triggering the creation of
       // this one.
-      assert.strictEqual(promiseAsyncIds[promiseAsyncIds.length - 1] || 1,
-                         triggerId);
+      assert.strictEqual(triggerId,
+                         promiseAsyncIds[promiseAsyncIds.length - 1] || 1);
       promiseAsyncIds.push(id);
     }
   }, 3),

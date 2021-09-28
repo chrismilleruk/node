@@ -28,9 +28,7 @@ for (let i = 0; i < 50; i++) {
 }
 
 // Test if file exists synchronously
-assert(common.fileExists(dir), 'Directory is not accessible');
+assert(fs.existsSync(dir), 'Directory is not accessible');
 
 // Test if file exists asynchronously
-fs.access(dir, function(err) {
-  assert.ifError(err);
-});
+fs.access(dir, common.mustSucceed());

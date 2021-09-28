@@ -20,11 +20,12 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-const common = require('../common');
+require('../common');
+const ArrayStream = require('../common/arraystream');
 
 const repl = require('repl');
 
-const putIn = new common.ArrayStream();
+const putIn = new ArrayStream();
 repl.start('', putIn);
 
 putIn.write = function(data) {
@@ -40,5 +41,5 @@ putIn.write = function(data) {
 
 putIn.run([
   'require("domain").create().on("error", function() { console.log("OK") })' +
-  '.run(function() { throw new Error("threw") })'
+  '.run(function() { throw new Error("threw") })',
 ]);

@@ -5,7 +5,7 @@ const domain = require('domain');
 const fs = require('fs');
 const vm = require('vm');
 
-common.crashOnUnhandledRejection();
+process.on('warning', common.mustNotCall());
 
 {
   const d = domain.create();
@@ -52,7 +52,6 @@ common.crashOnUnhandledRejection();
   d2.run(common.mustCall(() => {
     p.then(common.mustCall((v) => {
       assert.strictEqual(process.domain, d2);
-      assert.strictEqual(p.domain, d1);
     }));
   }));
 }
@@ -66,9 +65,8 @@ common.crashOnUnhandledRejection();
   }));
 
   d2.run(common.mustCall(() => {
-    p.then(p.domain.bind(common.mustCall((v) => {
+    p.then(d1.bind(common.mustCall((v) => {
       assert.strictEqual(process.domain, d1);
-      assert.strictEqual(p.domain, d1);
     })));
   }));
 }
@@ -85,7 +83,6 @@ common.crashOnUnhandledRejection();
     d2.run(common.mustCall(() => {
       p.then(common.mustCall((v) => {
         assert.strictEqual(process.domain, d2);
-        assert.strictEqual(p.domain, d1);
       }));
     }));
   }));
@@ -102,7 +99,6 @@ common.crashOnUnhandledRejection();
   d2.run(common.mustCall(() => {
     p.catch(common.mustCall((v) => {
       assert.strictEqual(process.domain, d2);
-      assert.strictEqual(p.domain, d1);
     }));
   }));
 }
@@ -128,5 +124,15 @@ common.crashOnUnhandledRejection();
         assert.strictEqual(process.domain, d);
       }));
     }));
+  }));
+}
+{
+  // Unhandled rejections become errors on the domain
+  const d = domain.create();
+  d.on('error', common.mustCall((e) => {
+    assert.strictEqual(e.message, 'foo');
+  }));
+  d.run(common.mustCall(() => {
+    Promise.reject(new Error('foo'));
   }));
 }

@@ -36,11 +36,9 @@ async function testConsoleLog() {
   session.disconnect();
 }
 
-common.crashOnUnhandledRejection();
-
 async function runTests() {
   await testConsoleLog();
   assert.ok(asserted, 'log statement did not reach the inspector');
 }
 
-runTests();
+runTests().then(common.mustCall());

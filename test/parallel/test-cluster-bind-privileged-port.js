@@ -21,6 +21,14 @@
 
 'use strict';
 const common = require('../common');
+
+// Skip on OS X Mojave. https://github.com/nodejs/node/issues/21679
+if (common.isOSX)
+  common.skip('macOS may allow ordinary processes to use any port');
+
+if (common.isIBMi)
+  common.skip('IBMi may allow ordinary processes to use any port');
+
 if (common.isWindows)
   common.skip('not reliable on Windows.');
 
@@ -31,7 +39,7 @@ const assert = require('assert');
 const cluster = require('cluster');
 const net = require('net');
 
-if (cluster.isMaster) {
+if (cluster.isPrimary) {
   cluster.fork().on('exit', common.mustCall((exitCode) => {
     assert.strictEqual(exitCode, 0);
   }));

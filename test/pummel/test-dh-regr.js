@@ -21,13 +21,23 @@
 
 'use strict';
 const common = require('../common');
-if (!common.hasCrypto)
+
+if (!common.hasCrypto) {
   common.skip('missing crypto');
+}
+
+if (process.config.variables.arm_version === '7') {
+  common.skip('Too slow for armv7 bots');
+}
 
 const assert = require('assert');
 const crypto = require('crypto');
 
-const p = crypto.createDiffieHellman(1024).getPrime();
+// FIPS requires length >= 1024 but we use 256 in this test to keep it from
+// taking too long and timing out in CI.
+const length = (common.hasFipsCrypto || common.hasOpenSSL3) ? 1024 : 256;
+
+const p = crypto.createDiffieHellman(length).getPrime();
 
 for (let i = 0; i < 2000; i++) {
   const a = crypto.createDiffieHellman(p);

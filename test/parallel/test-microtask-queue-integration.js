@@ -20,15 +20,13 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-const common = require('../common');
+require('../common');
 const assert = require('assert');
-
-common.crashOnUnhandledRejection();
 
 const implementations = [
   function(fn) {
     Promise.resolve().then(fn);
-  }
+  },
 ];
 
 let expected = 0;

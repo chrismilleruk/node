@@ -4,8 +4,7 @@
 
 // Flags: --expose-wasm
 
-load("test/mjsunit/wasm/wasm-constants.js");
-load("test/mjsunit/wasm/wasm-module-builder.js");
+d8.file.execute("test/mjsunit/wasm/wasm-module-builder.js");
 
 function testCallImport(func, check) {
   var builder = new WasmModuleBuilder();
@@ -14,8 +13,8 @@ function testCallImport(func, check) {
   builder.addImport("q", "func", sig_index);
   builder.addFunction("main", sig_index)
     .addBody([
-      kExprGetLocal, 0,            // --
-      kExprGetLocal, 1,            // --
+      kExprLocalGet, 0,            // --
+      kExprLocalGet, 1,            // --
       kExprCallFunction, 0])         // --
     .exportAs("main");
 
@@ -187,8 +186,8 @@ function testCallBinopVoid(type, func, check) {
   builder.addImport("q", "func", makeSig_v_xx(type));
   builder.addFunction("main", makeSig_r_xx(kWasmI32, type))
     .addBody([
-      kExprGetLocal, 0,           // --
-      kExprGetLocal, 1,           // --
+      kExprLocalGet, 0,           // --
+      kExprLocalGet, 1,           // --
       kExprCallFunction, 0,       // --
       kExprI32Const, 39,          // --
     ])
@@ -245,7 +244,7 @@ function testCallPrint() {
     .addBody([
       kExprI32Const, 27,     // --
       kExprCallFunction, 0,  // --
-      kExprGetLocal, 0,      // --
+      kExprLocalGet, 0,      // --
       kExprCallFunction, 1   // --
     ])
     .exportFunc();
@@ -294,8 +293,150 @@ function testImportName(name) {
   assertEquals(42, main());
 }
 
-testImportName("bla");
-testImportName("0");
-testImportName("  a @#$2 324 ");
-// TODO(bradnelson): This should succeed.
-// testImportName("");
+testImportName('bla');
+testImportName('0');
+testImportName('  a @#$2 324 ');
+testImportName('');
+
+(function testExportedImportsOnDifferentInstances() {
+  print(arguments.callee.name);
+  const exp = (function() {
+    const builder = new WasmModuleBuilder();
+    builder.addFunction('f11', kSig_i_v)
+        .addBody([kExprI32Const, 11])
+        .exportFunc();
+    builder.addFunction('f17', kSig_i_v)
+        .addBody([kExprI32Const, 17])
+        .exportFunc();
+    return builder.instantiate().exports;
+  })();
+
+  const builder = new WasmModuleBuilder();
+  const imp_index = builder.addImport('q', 'imp', kSig_i_v);
+  builder.addExport('exp', imp_index);
+
+  const module = builder.toModule();
+  const instance0 = new WebAssembly.Instance(module, {q: {imp: exp.f11}});
+  const instance1 = new WebAssembly.Instance(module, {q: {imp: exp.f17}});
+  const instance2 = new WebAssembly.Instance(module, {q: {imp: _ => 21}});
+  const instance3 = new WebAssembly.Instance(module, {q: {imp: _ => 27}});
+
+  assertEquals(11, instance0.exports.exp());
+  assertEquals(17, instance1.exports.exp());
+  assertEquals(21, instance2.exports.exp());
+  assertEquals(27, instance3.exports.exp());
+})();
+
+(function testImportedStartFunctionOnDifferentInstances() {
+  print(arguments.callee.name);
+  var global = 0;
+  const set_global = n => global = n;
+  const exp = (function() {
+    const builder = new WasmModuleBuilder();
+    const imp_index = builder.addImport('q', 'imp', kSig_v_i);
+    builder.addFunction('f11', kSig_v_v)
+        .addBody([kExprI32Const, 11, kExprCallFunction, imp_index])
+        .exportFunc();
+    builder.addFunction('f17', kSig_v_v)
+        .addBody([kExprI32Const, 17, kExprCallFunction, imp_index])
+        .exportFunc();
+    return builder.instantiate({q: {imp: set_global}}).exports;
+  })();
+
+  const builder = new WasmModuleBuilder();
+  const imp_index = builder.addImport('q', 'imp', kSig_v_v);
+  builder.addStart(imp_index);
+
+  const module = builder.toModule();
+
+  assertEquals(0, global);
+  new WebAssembly.Instance(module, {q: {imp: exp.f11}});
+  assertEquals(11, global);
+  new WebAssembly.Instance(module, {q: {imp: exp.f17}});
+  assertEquals(17, global);
+  new WebAssembly.Instance(module, {q: {imp: _ => set_global(21)}});
+  assertEquals(21, global);
+  new WebAssembly.Instance(module, {q: {imp: _ => set_global(27)}});
+  assertEquals(27, global);
+})();
+
+(function testImportedStartFunctionUsesRightInstance() {
+  print(arguments.callee.name);
+  var global = 0;
+  const set_global = n => global = n;
+  const exp = (function() {
+    const builder = new WasmModuleBuilder();
+    builder.addMemory(1, 1);
+    builder.exportMemoryAs('mem');
+    const imp_index = builder.addImport('q', 'imp', kSig_v_i);
+    builder.addFunction('f', kSig_v_v)
+        .addBody([kExprI32Const, 0, kExprI32Const, 11, kExprI32StoreMem8, 0, 0])
+        .exportFunc();
+    return builder.instantiate({q: {imp: set_global}}).exports;
+  })();
+
+  const builder = new WasmModuleBuilder();
+  const imp_index = builder.addImport('q', 'imp', kSig_v_v);
+  builder.addStart(imp_index);
+  const module = builder.toModule();
+
+  assertEquals(0, new Uint8Array(exp.mem.buffer)[0], 'memory initially 0');
+  new WebAssembly.Instance(module, {q: {imp: exp.f}});
+  assertEquals(11, new Uint8Array(exp.mem.buffer)[0], 'memory changed to 11');
+})();
+
+(function testImportWrapperWorksWithStrictAndSloppy() {
+  function jsSloppyMatch(x) {
+    assertSame(globalThis, this);
+    return x - 4;
+  }
+
+  function jsStrictMatch(x) {
+    "use strict";
+
+    assertEquals(undefined, this);
+    return x - 4;
+  }
+
+  function jsSloppyMismatch(x, y) {
+    assertSame(globalThis, this);
+    assertEquals(undefined, y);
+    return x - 4;
+  }
+
+  function jsStrictMismatch(x, y) {
+    "use strict";
+
+    assertEquals(undefined, this);
+    assertEquals(undefined, y);
+    return x - 4;
+  }
+
+  const builder = new WasmModuleBuilder();
+  const functionIndex = builder.addImport("imports", "jsFun", kSig_i_i);
+  builder.addFunction('wasmFun', kSig_i_i)
+    .addBody([
+      kExprLocalGet, 0,
+      kExprI32Const, 2,
+      kExprI32Mul,
+      kExprCallFunction, functionIndex
+    ])
+    .exportFunc();
+  const module = builder.toModule();
+
+  print("Running matching sloppy function");
+  const instanceSloppyMatch = new WebAssembly.Instance(module, {imports: {jsFun: jsSloppyMatch}});
+  assertEquals(42, instanceSloppyMatch.exports.wasmFun(23));
+
+  print("Running matching strict function");
+  const instanceStrictMatch = new WebAssembly.Instance(module, {imports: {jsFun: jsStrictMatch}});
+  assertEquals(42, instanceStrictMatch.exports.wasmFun(23));
+
+  print("Running mismatching sloppy function");
+  const instanceSloppyMismatch = new WebAssembly.Instance(module, {imports: {jsFun: jsSloppyMismatch}});
+  assertEquals(42, instanceSloppyMismatch.exports.wasmFun(23));
+
+  print("Running mismatching strict function");
+  const instanceStrictMismatch = new WebAssembly.Instance(module, {imports: {jsFun: jsStrictMismatch}});
+  assertEquals(42, instanceStrictMismatch.exports.wasmFun(23));
+})();

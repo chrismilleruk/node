@@ -23,6 +23,8 @@
 
 #include "unicode/utypes.h"
 
+#if U_SHOW_CPLUSPLUS_API
+
 #if !UCONFIG_NO_FORMATTING
 
 #include "unicode/udat.h"
@@ -43,13 +45,17 @@ U_NAMESPACE_BEGIN
 class TimeZone;
 class DateTimePatternGenerator;
 
-// explicit template instantiation. see digitlst.h
-// (When building DLLs for Windows this is required.)
-#if U_PF_WINDOWS <= U_PLATFORM && U_PLATFORM <= U_PF_CYGWIN
+/**
+ * \cond
+ * Export an explicit template instantiation. (See digitlst.h, datefmt.h, and others.)
+ * (When building DLLs for Windows this is required.)
+ */
+#if U_PF_WINDOWS <= U_PLATFORM && U_PLATFORM <= U_PF_CYGWIN && !defined(U_IN_DOXYGEN)
 template class U_I18N_API EnumSet<UDateFormatBooleanAttribute,
             0,
             UDAT_BOOLEAN_ATTRIBUTE_COUNT>;
 #endif
+/** \endcond */
 
 /**
  * DateFormat is an abstract class for a family of classes that convert dates and
@@ -133,7 +139,7 @@ template class U_I18N_API EnumSet<UDateFormatBooleanAttribute,
  * more control over the format or parsing, (or want to give your users more
  * control), you can try casting the DateFormat you get from the factory methods
  * to a SimpleDateFormat. This will work for the majority of countries; just
- * remember to chck getDynamicClassID() before carrying out the cast.
+ * remember to check getDynamicClassID() before carrying out the cast.
  * <P>
  * You can also use forms of the parse and format methods with ParsePosition and
  * FieldPosition to allow you to
@@ -216,6 +222,14 @@ public:
      * @stable ICU 2.0
      */
     virtual ~DateFormat();
+
+    /**
+     * Clones this object polymorphically.
+     * The caller owns the result and should delete it when done.
+     * @return clone, or nullptr if an error occurred
+     * @stable ICU 2.0
+     */
+    virtual DateFormat* clone() const = 0;
 
     /**
      * Equality operator.  Returns true if the two formats have the same behavior.
@@ -948,6 +962,8 @@ public:
 U_NAMESPACE_END
 
 #endif /* #if !UCONFIG_NO_FORMATTING */
+
+#endif /* U_SHOW_CPLUSPLUS_API */
 
 #endif // _DATEFMT
 //eof

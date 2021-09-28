@@ -29,12 +29,12 @@
 // have been generated using Gay's dtoa to produce the fixed representation:
 //         dtoa(v, 3, number_digits, &decimal_point, &sign, nullptr);
 
-#include "src/v8.h"
+#include "src/init/v8.h"
 
 #include "test/cctest/gay-fixed.h"
 
 namespace v8 {
-namespace internal {
+namespace base {
 
 static const PrecomputedFixed kFixedTestNumbers[] = {
   {3.3831671815188012695312500e+12, 2, "33831671815188", 13},
@@ -100039,12 +100039,10 @@ static const PrecomputedFixed kFixedTestNumbers[] = {
   {1.8209753351049137115478516e+09, 16, "18209753351049137115478516", 10}
 };
 
-
 Vector<const PrecomputedFixed> PrecomputedFixedRepresentations() {
   int number_elements = sizeof(kFixedTestNumbers) / sizeof(PrecomputedFixed);
   return Vector<const PrecomputedFixed>(kFixedTestNumbers, number_elements);
 }
 
-
-}  // namespace internal
+}  // namespace base
 }  // namespace v8

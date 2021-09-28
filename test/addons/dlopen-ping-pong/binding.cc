@@ -5,7 +5,9 @@
 
 #include <dlfcn.h>
 
-extern "C" const char* dlopen_pong(void) {
+extern "C"
+__attribute__((visibility("default")))
+const char* dlopen_pong(void) {
   return "pong";
 }
 
@@ -25,6 +27,7 @@ static ping ping_func;
 void LoadLibrary(const FunctionCallbackInfo<Value>& args) {
   const String::Utf8Value filename(args.GetIsolate(), args[0]);
   void* handle = dlopen(*filename, RTLD_LAZY);
+  if (handle == nullptr) fprintf(stderr, "%s\n", dlerror());
   assert(handle != nullptr);
   ping_func = reinterpret_cast<ping>(dlsym(handle, "dlopen_ping"));
   assert(ping_func != nullptr);
@@ -33,7 +36,8 @@ void LoadLibrary(const FunctionCallbackInfo<Value>& args) {
 void Ping(const FunctionCallbackInfo<Value>& args) {
   Isolate* isolate = args.GetIsolate();
   assert(ping_func != nullptr);
-  args.GetReturnValue().Set(String::NewFromUtf8(isolate, ping_func()));
+  args.GetReturnValue().Set(String::NewFromUtf8(
+        isolate, ping_func()).ToLocalChecked());
 }
 
 void init(Local<Object> exports) {
