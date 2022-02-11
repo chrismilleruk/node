@@ -213,6 +213,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   void DataAlign(int m);
   // Aligns code to something that's optimal for a jump target for the platform.
   void CodeTargetAlign();
+  void LoopHeaderAlign() { CodeTargetAlign(); }
 
   inline void Unreachable();
 
@@ -339,8 +340,8 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
 
   // Record a deoptimization reason that can be used by a log or cpu profiler.
   // Use --trace-deopt to enable.
-  void RecordDeoptReason(DeoptimizeReason reason, SourcePosition position,
-                         int id);
+  void RecordDeoptReason(DeoptimizeReason reason, uint32_t node_id,
+                         SourcePosition position, int id);
 
   int buffer_space() const;
 
@@ -2064,26 +2065,29 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
 
   // Required by V8.
   void db(uint8_t data) { dc8(data); }
-  void dd(uint32_t data, RelocInfo::Mode rmode = RelocInfo::NONE) {
+  void dd(uint32_t data, RelocInfo::Mode rmode = RelocInfo::NO_INFO) {
     BlockPoolsScope no_pool_scope(this);
-    if (!RelocInfo::IsNone(rmode)) {
-      DCHECK(RelocInfo::IsDataEmbeddedObject(rmode));
+    if (!RelocInfo::IsNoInfo(rmode)) {
+      DCHECK(RelocInfo::IsDataEmbeddedObject(rmode) ||
+             RelocInfo::IsLiteralConstant(rmode));
       RecordRelocInfo(rmode);
     }
     dc32(data);
   }
-  void dq(uint64_t data, RelocInfo::Mode rmode = RelocInfo::NONE) {
+  void dq(uint64_t data, RelocInfo::Mode rmode = RelocInfo::NO_INFO) {
     BlockPoolsScope no_pool_scope(this);
-    if (!RelocInfo::IsNone(rmode)) {
-      DCHECK(RelocInfo::IsDataEmbeddedObject(rmode));
+    if (!RelocInfo::IsNoInfo(rmode)) {
+      DCHECK(RelocInfo::IsDataEmbeddedObject(rmode) ||
+             RelocInfo::IsLiteralConstant(rmode));
       RecordRelocInfo(rmode);
     }
     dc64(data);
   }
-  void dp(uintptr_t data, RelocInfo::Mode rmode = RelocInfo::NONE) {
+  void dp(uintptr_t data, RelocInfo::Mode rmode = RelocInfo::NO_INFO) {
     BlockPoolsScope no_pool_scope(this);
-    if (!RelocInfo::IsNone(rmode)) {
-      DCHECK(RelocInfo::IsDataEmbeddedObject(rmode));
+    if (!RelocInfo::IsNoInfo(rmode)) {
+      DCHECK(RelocInfo::IsDataEmbeddedObject(rmode) ||
+             RelocInfo::IsLiteralConstant(rmode));
       RecordRelocInfo(rmode);
     }
     dc64(data);

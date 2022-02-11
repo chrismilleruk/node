@@ -36,6 +36,13 @@ static constexpr T FirstFromVarArgs(T x, ...) noexcept {
 #define BUILTIN_CODE(isolate, name) \
   (isolate)->builtins()->code_handle(i::Builtin::k##name)
 
+#ifdef V8_EXTERNAL_CODE_SPACE
+#define BUILTIN_CODET(isolate, name) \
+  (isolate)->builtins()->codet_handle(i::Builtin::k##name)
+#else
+#define BUILTIN_CODET(isolate, name) BUILTIN_CODE(isolate, name)
+#endif  // V8_EXTERNAL_CODE_SPACE
+
 enum class Builtin : int32_t {
   kNoBuiltinId = -1,
 #define DEF_ENUM(Name, ...) k##Name,
@@ -74,10 +81,14 @@ class Builtins {
 #define ADD_ONE(Name, ...) +1
   static constexpr int kBuiltinCount = 0 BUILTIN_LIST(
       ADD_ONE, ADD_ONE, ADD_ONE, ADD_ONE, ADD_ONE, ADD_ONE, ADD_ONE);
+  static constexpr int kBuiltinTier0Count = 0 BUILTIN_LIST_TIER0(
+      ADD_ONE, ADD_ONE, ADD_ONE, ADD_ONE, ADD_ONE, ADD_ONE, ADD_ONE);
 #undef ADD_ONE
 
   static constexpr Builtin kFirst = static_cast<Builtin>(0);
   static constexpr Builtin kLast = static_cast<Builtin>(kBuiltinCount - 1);
+  static constexpr Builtin kLastTier0 =
+      static_cast<Builtin>(kBuiltinTier0Count - 1);
 
   static constexpr int kFirstWideBytecodeHandler =
       static_cast<int>(Builtin::kFirstBytecodeHandler) +
@@ -96,10 +107,17 @@ class Builtins {
     return static_cast<uint32_t>(maybe_id) <
            static_cast<uint32_t>(kBuiltinCount);
   }
+  static constexpr bool IsTier0(Builtin builtin) {
+    return builtin <= kLastTier0 && IsBuiltinId(builtin);
+  }
 
   static constexpr Builtin FromInt(int id) {
     DCHECK(IsBuiltinId(id));
     return static_cast<Builtin>(id);
+  }
+  static constexpr int ToInt(Builtin id) {
+    DCHECK(IsBuiltinId(id));
+    return static_cast<int>(id);
   }
 
   // The different builtin kinds are documented in builtins-definitions.h.
@@ -147,9 +165,13 @@ class Builtins {
 
   // Used by CreateOffHeapTrampolines in isolate.cc.
   void set_code(Builtin builtin, Code code);
+  void set_codet(Builtin builtin, CodeT code);
 
   V8_EXPORT_PRIVATE Code code(Builtin builtin);
   V8_EXPORT_PRIVATE Handle<Code> code_handle(Builtin builtin);
+
+  V8_EXPORT_PRIVATE CodeT codet(Builtin builtin);
+  V8_EXPORT_PRIVATE Handle<CodeT> codet_handle(Builtin builtin);
 
   static CallInterfaceDescriptor CallInterfaceDescriptorFor(Builtin builtin);
   V8_EXPORT_PRIVATE static Callable CallableFor(Isolate* isolate,
@@ -181,6 +203,11 @@ class Builtins {
   // by handle location. Similar to Heap::IsRootHandle.
   bool IsBuiltinHandle(Handle<HeapObject> maybe_code, Builtin* index) const;
 
+  // Similar to IsBuiltinHandle but for respective CodeDataContainer handle.
+  // Can be used only when external code space is enabled.
+  bool IsBuiltinCodeDataContainerHandle(Handle<HeapObject> maybe_code,
+                                        Builtin* index) const;
+
   // True, iff the given code object is a builtin with off-heap embedded code.
   static bool IsIsolateIndependentBuiltin(const Code code);
 
@@ -195,9 +222,7 @@ class Builtins {
     return kAllBuiltinsAreIsolateIndependent;
   }
 
-  // Initializes the table of builtin entry points based on the current contents
-  // of the builtins table.
-  static void InitializeBuiltinEntryTable(Isolate* isolate);
+  static void InitializeIsolateDataTables(Isolate* isolate);
 
   // Emits a CodeCreateEvent for every builtin.
   static void EmitCodeCreateEvents(Isolate* isolate);
@@ -266,6 +291,13 @@ class Builtins {
     CHECK(js_entry_handler_offset_ == 0 || js_entry_handler_offset_ == offset);
     js_entry_handler_offset_ = offset;
   }
+
+  // Returns given builtin's slot in the main builtin table.
+  FullObjectSlot builtin_slot(Builtin builtin);
+  // Returns given builtin's slot in the tier0 builtin table.
+  FullObjectSlot builtin_tier0_slot(Builtin builtin);
+  // Returns given builtin's slot in the builtin code data container table.
+  FullObjectSlot builtin_code_data_container_slot(Builtin builtin);
 
  private:
   static void Generate_CallFunction(MacroAssembler* masm,

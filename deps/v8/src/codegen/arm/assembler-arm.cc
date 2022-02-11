@@ -1132,7 +1132,7 @@ bool MustOutputRelocInfo(RelocInfo::Mode rmode, const Assembler* assembler) {
   if (RelocInfo::IsOnlyForSerializer(rmode)) {
     if (assembler->predictable_code_size()) return true;
     return assembler->options().record_reloc_info_for_serialization;
-  } else if (RelocInfo::IsNone(rmode)) {
+  } else if (RelocInfo::IsNoInfo(rmode)) {
     return false;
   }
   return true;
@@ -1464,7 +1464,7 @@ int Assembler::branch_offset(Label* L) {
 
 // Branch instructions.
 void Assembler::b(int branch_offset, Condition cond, RelocInfo::Mode rmode) {
-  if (!RelocInfo::IsNone(rmode)) RecordRelocInfo(rmode);
+  if (!RelocInfo::IsNoInfo(rmode)) RecordRelocInfo(rmode);
   DCHECK_EQ(branch_offset & 3, 0);
   int imm24 = branch_offset >> 2;
   const bool b_imm_check = is_int24(imm24);
@@ -1478,7 +1478,7 @@ void Assembler::b(int branch_offset, Condition cond, RelocInfo::Mode rmode) {
 }
 
 void Assembler::bl(int branch_offset, Condition cond, RelocInfo::Mode rmode) {
-  if (!RelocInfo::IsNone(rmode)) RecordRelocInfo(rmode);
+  if (!RelocInfo::IsNoInfo(rmode)) RecordRelocInfo(rmode);
   DCHECK_EQ(branch_offset & 3, 0);
   int imm24 = branch_offset >> 2;
   const bool bl_imm_check = is_int24(imm24);
@@ -4786,7 +4786,7 @@ static Instr EncodeNeonPairwiseOp(NeonPairwiseOp op, NeonDataType dt,
 void Assembler::vpadd(DwVfpRegister dst, DwVfpRegister src1,
                       DwVfpRegister src2) {
   DCHECK(IsEnabled(NEON));
-  // Dd = vpadd(Dn, Dm) SIMD integer pairwise ADD.
+  // Dd = vpadd(Dn, Dm) SIMD floating point pairwise ADD.
   // Instruction details available in ARM DDI 0406C.b, A8-982.
   int vd, d;
   dst.split_code(&vd, &d);
@@ -5175,8 +5175,6 @@ void Assembler::RecordConstPool(int size) {
 void Assembler::GrowBuffer() {
   DCHECK_EQ(buffer_start_, buffer_->start());
 
-  bool previously_on_heap = buffer_->IsOnHeap();
-
   // Compute new buffer size.
   int old_size = buffer_->size();
   int new_size = std::min(2 * old_size, old_size + 1 * MB);
@@ -5209,14 +5207,6 @@ void Assembler::GrowBuffer() {
       reinterpret_cast<Address>(reloc_info_writer.last_pc()) + pc_delta);
   reloc_info_writer.Reposition(new_reloc_start, new_last_pc);
 
-  // Patch on-heap references to handles.
-  if (previously_on_heap && !buffer_->IsOnHeap()) {
-    Address base = reinterpret_cast<Address>(buffer_->start());
-    for (auto p : saved_handles_for_raw_object_ptr_) {
-      WriteUnalignedValue(base + p.first, p.second);
-    }
-  }
-
   // None of our relocation types are pc relative pointing outside the code
   // buffer nor pc absolute pointing inside the code buffer, so there is no need
   // to relocate any emitted relocation entries.
@@ -5236,8 +5226,9 @@ void Assembler::dd(uint32_t data, RelocInfo::Mode rmode) {
   // blocked before using dd.
   DCHECK(is_const_pool_blocked() || pending_32_bit_constants_.empty());
   CheckBuffer();
-  if (!RelocInfo::IsNone(rmode)) {
-    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode));
+  if (!RelocInfo::IsNoInfo(rmode)) {
+    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode) ||
+           RelocInfo::IsLiteralConstant(rmode));
     RecordRelocInfo(rmode);
   }
   base::WriteUnalignedValue(reinterpret_cast<Address>(pc_), data);
@@ -5249,8 +5240,9 @@ void Assembler::dq(uint64_t value, RelocInfo::Mode rmode) {
   // blocked before using dq.
   DCHECK(is_const_pool_blocked() || pending_32_bit_constants_.empty());
   CheckBuffer();
-  if (!RelocInfo::IsNone(rmode)) {
-    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode));
+  if (!RelocInfo::IsNoInfo(rmode)) {
+    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode) ||
+           RelocInfo::IsLiteralConstant(rmode));
     RecordRelocInfo(rmode);
   }
   base::WriteUnalignedValue(reinterpret_cast<Address>(pc_), value);
@@ -5449,17 +5441,7 @@ void Assembler::CheckConstPool(bool force_emit, bool require_jump) {
       instr_at_put(entry.position(),
                    SetLdrRegisterImmediateOffset(instr, delta));
       if (!entry.is_merged()) {
-        if (IsOnHeap() && RelocInfo::IsEmbeddedObjectMode(entry.rmode())) {
-          saved_handles_for_raw_object_ptr_.push_back(
-              std::make_pair(pc_offset(), entry.value()));
-          Handle<HeapObject> handle(reinterpret_cast<Address*>(entry.value()));
-          emit(handle->ptr());
-          // We must ensure that `emit` is not growing the assembler buffer
-          // and falling back to off-heap compilation.
-          DCHECK(IsOnHeap());
-        } else {
-          emit(entry.value());
-        }
+        emit(entry.value());
       }
     }
 

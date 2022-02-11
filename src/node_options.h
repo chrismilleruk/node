@@ -11,6 +11,10 @@
 #include "node_mutex.h"
 #include "util.h"
 
+#if HAVE_OPENSSL
+#include "openssl/opensslv.h"
+#endif
+
 namespace node {
 
 class HostPort {
@@ -103,15 +107,15 @@ class EnvironmentOptions : public Options {
   std::vector<std::string> conditions;
   std::string dns_result_order;
   bool enable_source_maps = false;
-  bool experimental_json_modules = false;
-  bool experimental_modules = false;
+  bool experimental_fetch = false;
+  bool experimental_https_modules = false;
   std::string experimental_specifier_resolution;
   bool experimental_wasm_modules = false;
   bool experimental_import_meta_resolve = false;
   std::string module_type;
   std::string experimental_policy;
   std::string experimental_policy_integrity;
-  bool has_policy_integrity_string;
+  bool has_policy_integrity_string = false;
   bool experimental_repl_await = true;
   bool experimental_vm_modules = false;
   bool expose_internals = false;
@@ -251,6 +255,9 @@ class PerProcessOptions : public Options {
   bool use_bundled_ca = false;
   bool enable_fips_crypto = false;
   bool force_fips_crypto = false;
+#endif
+#if OPENSSL_VERSION_MAJOR >= 3
+  bool openssl_legacy_provider = false;
 #endif
 
   // Per-process because reports can be triggered outside a known V8 context.
@@ -462,7 +469,7 @@ class OptionsParser {
   template <typename OtherOptions>
   friend class OptionsParser;
 
-  friend void GetOptions(const v8::FunctionCallbackInfo<v8::Value>& args);
+  friend void GetCLIOptions(const v8::FunctionCallbackInfo<v8::Value>& args);
   friend std::string GetBashCompletion();
 };
 

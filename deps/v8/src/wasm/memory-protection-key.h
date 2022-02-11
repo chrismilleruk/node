@@ -82,6 +82,9 @@ bool SetPermissionsAndMemoryProtectionKey(
 void SetPermissionsForMemoryProtectionKey(
     int key, MemoryProtectionKeyPermission permissions);
 
+// Get the permissions of the protection key {key} for the current thread.
+MemoryProtectionKeyPermission GetMemoryProtectionKeyPermission(int key);
+
 }  // namespace wasm
 }  // namespace internal
 }  // namespace v8

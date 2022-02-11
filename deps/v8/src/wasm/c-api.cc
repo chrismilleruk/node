@@ -26,12 +26,13 @@
 #include <iostream>
 
 #include "include/libplatform/libplatform.h"
+#include "include/v8-initialization.h"
 #include "src/api/api-inl.h"
 #include "src/base/platform/wrappers.h"
 #include "src/builtins/builtins.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/objects/js-collection-inl.h"
-#include "src/objects/managed.h"
+#include "src/objects/managed-inl.h"
 #include "src/objects/stack-frame-info-inl.h"
 #include "src/wasm/leb-helper.h"
 #include "src/wasm/module-instantiate.h"
@@ -167,7 +168,7 @@ own<ExternType> GetImportExportType(const i::wasm::WasmModule* module,
       Mutability mutability = global.mutability ? VAR : CONST;
       return GlobalType::make(std::move(content), mutability);
     }
-    case i::wasm::kExternalException:
+    case i::wasm::kExternalTag:
       UNREACHABLE();
   }
 }
@@ -369,7 +370,7 @@ struct EngineImpl {
     delete counter_map_;
 #endif
     v8::V8::Dispose();
-    v8::V8::ShutdownPlatform();
+    v8::V8::DisposePlatform();
   }
 };
 
@@ -396,6 +397,11 @@ auto Engine::make(own<Config>&& config) -> own<Engine> {
   if (!engine) return own<Engine>();
   engine->platform = v8::platform::NewDefaultPlatform();
   v8::V8::InitializePlatform(engine->platform.get());
+#ifdef V8_VIRTUAL_MEMORY_CAGE
+  if (!v8::V8::InitializeVirtualMemoryCage()) {
+    FATAL("Could not initialize the virtual memory cage");
+  }
+#endif
   v8::V8::Initialize();
   return make_own(seal<Engine>(engine));
 }
@@ -1436,8 +1442,9 @@ auto make_func(Store* store_abs, FuncData* data) -> own<Func> {
   i::Handle<i::WasmCapiFunction> function = i::WasmCapiFunction::New(
       isolate, reinterpret_cast<i::Address>(&FuncData::v8_callback),
       embedder_data, SignatureHelper::Serialize(isolate, data->type.get()));
-  i::Tuple2::cast(function->shared().wasm_capi_function_data().ref())
-      .set_value2(*function);
+  i::WasmApiFunctionRef::cast(
+      function->shared().wasm_capi_function_data().internal().ref())
+      .set_callable(*function);
   auto func = implement<Func>::type::make(store, function);
   return func;
 }
@@ -1663,7 +1670,7 @@ auto Func::call(const Val args[], Val results[]) const -> own<Trap> {
   // TODO(v8:11880): avoid roundtrips between cdc and code.
   i::Handle<i::CodeT> wrapper_code = i::Handle<i::CodeT>(
       i::CodeT::cast(function_data->c_wrapper_code()), isolate);
-  i::Address call_target = function_data->foreign_address();
+  i::Address call_target = function_data->internal().foreign_address();
 
   i::wasm::CWasmArgumentsPacker packer(function_data->packed_args_size());
   PushArgs(sig, args, &packer, store);
@@ -1673,9 +1680,9 @@ auto Func::call(const Val args[], Val results[]) const -> own<Trap> {
       static_cast<int>(instance->module()->num_imported_functions)) {
     object_ref = i::handle(
         instance->imported_function_refs().get(function_index), isolate);
-    if (object_ref->IsTuple2()) {
-      i::JSFunction jsfunc =
-          i::JSFunction::cast(i::Tuple2::cast(*object_ref).value2());
+    if (object_ref->IsWasmApiFunctionRef()) {
+      i::JSFunction jsfunc = i::JSFunction::cast(
+          i::WasmApiFunctionRef::cast(*object_ref).callable());
       i::Object data = jsfunc.shared().function_data(v8::kAcquireLoad);
       if (data.IsWasmCapiFunctionData()) {
         return CallWasmCapiFunction(i::WasmCapiFunctionData::cast(data), args,
@@ -1945,7 +1952,7 @@ auto Table::make(Store* store_abs, const TableType* type, const Ref* ref)
   i::Handle<i::FixedArray> backing_store;
   i::Handle<i::WasmTableObject> table_obj = i::WasmTableObject::New(
       isolate, i::Handle<i::WasmInstanceObject>(), i_type, minimum, has_maximum,
-      maximum, &backing_store);
+      maximum, &backing_store, isolate->factory()->null_value());
 
   if (ref) {
     i::Handle<i::JSReceiver> init = impl(ref)->v8_object();
@@ -1989,6 +1996,10 @@ auto Table::get(size_t index) const -> own<Ref> {
       i::WasmTableObject::Get(isolate, table, static_cast<uint32_t>(index));
   // TODO(jkummerow): If we support both JavaScript and the C-API at the same
   // time, we need to handle Smis and other JS primitives here.
+  if (result->IsWasmInternalFunction()) {
+    result = handle(
+        i::Handle<i::WasmInternalFunction>::cast(result)->external(), isolate);
+  }
   DCHECK(result->IsNull(isolate) || result->IsJSReceiver());
   return V8RefValueToWasm(impl(this)->store(), result);
 }
@@ -1999,6 +2010,11 @@ auto Table::set(size_t index, const Ref* ref) -> bool {
   i::Isolate* isolate = table->GetIsolate();
   i::HandleScope handle_scope(isolate);
   i::Handle<i::Object> obj = WasmRefToV8(isolate, ref);
+  // TODO(7748): Generalize the condition if other table types are allowed.
+  if ((table->type() == i::wasm::kWasmFuncRef || table->type().has_index()) &&
+      !obj->IsNull()) {
+    obj = i::WasmInternalFunction::FromExternal(obj, isolate).ToHandleChecked();
+  }
   i::WasmTableObject::Set(isolate, table, static_cast<uint32_t>(index), obj);
   return true;
 }
@@ -2012,9 +2028,14 @@ auto Table::grow(size_t delta, const Ref* ref) -> bool {
   i::Handle<i::WasmTableObject> table = impl(this)->v8_object();
   i::Isolate* isolate = table->GetIsolate();
   i::HandleScope scope(isolate);
-  i::Handle<i::Object> init_value = WasmRefToV8(isolate, ref);
-  int result = i::WasmTableObject::Grow(
-      isolate, table, static_cast<uint32_t>(delta), init_value);
+  i::Handle<i::Object> obj = WasmRefToV8(isolate, ref);
+  // TODO(7748): Generalize the condition if other table types are allowed.
+  if ((table->type() == i::wasm::kWasmFuncRef || table->type().has_index()) &&
+      !obj->IsNull()) {
+    obj = i::WasmInternalFunction::FromExternal(obj, isolate).ToHandleChecked();
+  }
+  int result = i::WasmTableObject::Grow(isolate, table,
+                                        static_cast<uint32_t>(delta), obj);
   return result >= 0;
 }
 

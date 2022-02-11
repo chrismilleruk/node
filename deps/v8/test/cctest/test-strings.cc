@@ -32,6 +32,8 @@
 
 #include <stdlib.h>
 
+#include "include/v8-initialization.h"
+#include "include/v8-json.h"
 #include "src/api/api-inl.h"
 #include "src/base/platform/elapsed-timer.h"
 #include "src/base/strings.h"
@@ -600,7 +602,7 @@ TEST(ConsStringWithEmptyFirstFlatten) {
       isolate->factory()->NewStringFromAsciiChecked("snd012345012345678");
   cons->set_first(*new_fst);
   cons->set_second(*new_snd);
-  CHECK(!cons->IsFlat());
+  CHECK(!cons->IsFlat(GetPtrComprCageBase(*cons)));
   CHECK_EQ(initial_length, new_fst->length() + new_snd->length());
   CHECK_EQ(initial_length, cons->length());
 
@@ -1889,7 +1891,6 @@ TEST(HashArrayIndexStrings) {
 }
 
 TEST(StringEquals) {
-  v8::V8::Initialize();
   v8::Isolate* isolate = CcTest::isolate();
   v8::HandleScope scope(isolate);
 
@@ -1926,7 +1927,6 @@ class OneByteStringResource : public v8::String::ExternalOneByteStringResource {
 TEST(Regress876759) {
   // Thin strings are used in conjunction with young gen
   if (FLAG_single_generation) return;
-  v8::V8::Initialize();
   Isolate* isolate = CcTest::i_isolate();
   Factory* factory = isolate->factory();
 

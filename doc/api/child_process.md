@@ -143,6 +143,7 @@ exec('"my script.cmd" a b', (err, stdout, stderr) => {
 ```
 
 ### `child_process.exec(command[, options][, callback])`
+
 <!-- YAML
 added: v0.1.90
 changes:
@@ -274,6 +275,7 @@ controller.abort();
 ```
 
 ### `child_process.execFile(file[, args][, options][, callback])`
+
 <!-- YAML
 added: v0.1.91
 changes:
@@ -294,7 +296,7 @@ changes:
 -->
 
 * `file` {string} The name or path of the executable file to run.
-* `args` {string[]} List of string arguments.
+* `args` {string\[]} List of string arguments.
 * `options` {Object}
   * `cwd` {string|URL} Current working directory of the child process.
   * `env` {Object} Environment key-value pairs. **Default:** `process.env`.
@@ -385,9 +387,16 @@ controller.abort();
 ```
 
 ### `child_process.fork(modulePath[, args][, options])`
+
 <!-- YAML
 added: v0.5.0
 changes:
+  - version:
+      - v17.4.0
+      - v16.14.0
+    pr-url: https://github.com/nodejs/node/pull/41225
+    description: The `modulePath` parameter can be a WHATWG `URL` object using
+                 `file:` protocol.
   - version:
       - v16.4.0
       - v14.18.0
@@ -422,8 +431,8 @@ changes:
     description: The `stdio` option is supported now.
 -->
 
-* `modulePath` {string} The module to run in the child.
-* `args` {string[]} List of string arguments.
+* `modulePath` {string|URL} The module to run in the child.
+* `args` {string\[]} List of string arguments.
 * `options` {Object}
   * `cwd` {string|URL} Current working directory of the child process.
   * `detached` {boolean} Prepare child to run independently of its parent
@@ -431,7 +440,7 @@ changes:
     [`options.detached`][]).
   * `env` {Object} Environment key-value pairs. **Default:** `process.env`.
   * `execPath` {string} Executable used to create the child process.
-  * `execArgv` {string[]} List of string arguments passed to the executable.
+  * `execArgv` {string\[]} List of string arguments passed to the executable.
     **Default:** `process.execArgv`.
   * `gid` {number} Sets the group identity of the process (see setgid(2)).
   * `serialization` {string} Specify the kind of serialization used for sending
@@ -506,6 +515,7 @@ if (process.argv[2] === 'child') {
 ```
 
 ### `child_process.spawn(command[, args][, options])`
+
 <!-- YAML
 added: v0.1.90
 changes:
@@ -547,7 +557,7 @@ changes:
 -->
 
 * `command` {string} The command to run.
-* `args` {string[]} List of string arguments.
+* `args` {string\[]} List of string arguments.
 * `options` {Object}
   * `cwd` {string|URL} Current working directory of the child process.
   * `env` {Object} Environment key-value pairs. **Default:** `process.env`.
@@ -578,7 +588,6 @@ changes:
     is allowed to run. **Default:** `undefined`.
   * `killSignal` {string|integer} The signal value to be used when the spawned
     process will be killed by timeout or abort signal. **Default:** `'SIGTERM'`.
-
 * Returns: {ChildProcess}
 
 The `child_process.spawn()` method spawns a new process using the given
@@ -701,6 +710,7 @@ controller.abort(); // Stops the child process
 ```
 
 #### `options.detached`
+
 <!-- YAML
 added: v0.7.10
 -->
@@ -759,6 +769,7 @@ subprocess.unref();
 ```
 
 #### `options.stdio`
+
 <!-- YAML
 added: v0.7.10
 changes:
@@ -796,13 +807,13 @@ pipes between the parent and child. The value is one of the following:
    `child_process` object as [`subprocess.stdio[fd]`][`subprocess.stdio`]. Pipes
    created for fds 0, 1, and 2 are also available as [`subprocess.stdin`][],
    [`subprocess.stdout`][] and [`subprocess.stderr`][], respectively.
-1. `'overlapped'`: Same as `'pipe'` except that the `FILE_FLAG_OVERLAPPED` flag
+2. `'overlapped'`: Same as `'pipe'` except that the `FILE_FLAG_OVERLAPPED` flag
    is set on the handle. This is necessary for overlapped I/O on the child
    process's stdio handles. See the
    [docs](https://docs.microsoft.com/en-us/windows/win32/fileio/synchronous-and-asynchronous-i-o)
    for more details. This is exactly the same as `'pipe'` on non-Windows
    systems.
-1. `'ipc'`: Create an IPC channel for passing messages/file descriptors
+3. `'ipc'`: Create an IPC channel for passing messages/file descriptors
    between parent and child. A [`ChildProcess`][] may have at most one IPC
    stdio file descriptor. Setting this option enables the
    [`subprocess.send()`][] method. If the child is a Node.js process, the
@@ -813,25 +824,25 @@ pipes between the parent and child. The value is one of the following:
    Accessing the IPC channel fd in any way other than [`process.send()`][]
    or using the IPC channel with a child process that is not a Node.js instance
    is not supported.
-1. `'ignore'`: Instructs Node.js to ignore the fd in the child. While Node.js
+4. `'ignore'`: Instructs Node.js to ignore the fd in the child. While Node.js
    will always open fds 0, 1, and 2 for the processes it spawns, setting the fd
    to `'ignore'` will cause Node.js to open `/dev/null` and attach it to the
    child's fd.
-1. `'inherit'`: Pass through the corresponding stdio stream to/from the
+5. `'inherit'`: Pass through the corresponding stdio stream to/from the
    parent process. In the first three positions, this is equivalent to
    `process.stdin`, `process.stdout`, and `process.stderr`, respectively. In
    any other position, equivalent to `'ignore'`.
-1. {Stream} object: Share a readable or writable stream that refers to a tty,
+6. {Stream} object: Share a readable or writable stream that refers to a tty,
    file, socket, or a pipe with the child process. The stream's underlying
    file descriptor is duplicated in the child process to the fd that
    corresponds to the index in the `stdio` array. The stream must have an
    underlying descriptor (file streams do not until the `'open'` event has
    occurred).
-1. Positive integer: The integer value is interpreted as a file descriptor
+7. Positive integer: The integer value is interpreted as a file descriptor
    that is currently open in the parent process. It is shared with the child
    process, similar to how {Stream} objects can be shared. Passing sockets
    is not supported on Windows.
-1. `null`, `undefined`: Use default value. For stdio fds 0, 1, and 2 (in other
+8. `null`, `undefined`: Use default value. For stdio fds 0, 1, and 2 (in other
    words, stdin, stdout, and stderr) a pipe is created. For fd 3 and up, the
    default is `'ignore'`.
 
@@ -849,12 +860,12 @@ spawn('prg', [], { stdio: ['pipe', 'pipe', process.stderr] });
 spawn('prg', [], { stdio: ['pipe', null, null, null, 'pipe'] });
 ```
 
-*It is worth noting that when an IPC channel is established between the
+_It is worth noting that when an IPC channel is established between the
 parent and child processes, and the child is a Node.js process, the child
 is launched with the IPC channel unreferenced (using `unref()`) until the
 child registers an event handler for the [`'disconnect'`][] event
 or the [`'message'`][] event. This allows the child to exit
-normally without the process being held open by the open IPC channel.*
+normally without the process being held open by the open IPC channel._
 
 On Unix-like operating systems, the [`child_process.spawn()`][] method
 performs memory operations synchronously before decoupling the event loop
@@ -876,6 +887,7 @@ scripting tasks and for simplifying the loading/processing of application
 configuration at startup.
 
 ### `child_process.execFileSync(file[, args][, options])`
+
 <!-- YAML
 added: v0.11.12
 changes:
@@ -903,7 +915,7 @@ changes:
 -->
 
 * `file` {string} The name or path of the executable file to run.
-* `args` {string[]} List of string arguments.
+* `args` {string\[]} List of string arguments.
 * `options` {Object}
   * `cwd` {string|URL} Current working directory of the child process.
   * `input` {string|Buffer|TypedArray|DataView} The value which will be passed
@@ -951,6 +963,7 @@ function. Any input containing shell metacharacters may be used to trigger
 arbitrary command execution.**
 
 ### `child_process.execSync(command[, options])`
+
 <!-- YAML
 added: v0.11.12
 changes:
@@ -1017,6 +1030,7 @@ The [`Error`][] object will contain the entire result from
 metacharacters may be used to trigger arbitrary command execution.**
 
 ### `child_process.spawnSync(command[, args][, options])`
+
 <!-- YAML
 added: v0.11.12
 changes:
@@ -1047,7 +1061,7 @@ changes:
 -->
 
 * `command` {string} The command to run.
-* `args` {string[]} List of string arguments.
+* `args` {string\[]} List of string arguments.
 * `options` {Object}
   * `cwd` {string|URL} Current working directory of the child process.
   * `input` {string|Buffer|TypedArray|DataView} The value which will be passed
@@ -1102,6 +1116,7 @@ function. Any input containing shell metacharacters may be used to trigger
 arbitrary command execution.**
 
 ## Class: `ChildProcess`
+
 <!-- YAML
 added: v2.2.0
 -->
@@ -1116,6 +1131,7 @@ use the [`child_process.spawn()`][], [`child_process.exec()`][],
 instances of `ChildProcess`.
 
 ### Event: `'close'`
+
 <!-- YAML
 added: v0.7.7
 -->
@@ -1147,6 +1163,7 @@ ls.on('exit', (code) => {
 ```
 
 ### Event: `'disconnect'`
+
 <!-- YAML
 added: v0.7.2
 -->
@@ -1174,6 +1191,7 @@ against accidentally invoking handler functions multiple times.
 See also [`subprocess.kill()`][] and [`subprocess.send()`][].
 
 ### Event: `'exit'`
+
 <!-- YAML
 added: v0.1.90
 -->
@@ -1197,6 +1215,7 @@ re-raise the handled signal.
 See waitpid(2).
 
 ### Event: `'message'`
+
 <!-- YAML
 added: v0.5.9
 -->
@@ -1217,6 +1236,7 @@ to represent.
 See [Advanced serialization][] for more details.
 
 ### Event: `'spawn'`
+
 <!-- YAML
 added:
   - v15.1.0
@@ -1236,6 +1256,7 @@ the `'spawn'` event will fire, though `bash` may fail to spawn `some-command`.
 This caveat also applies when using `{ shell: true }`.
 
 ### `subprocess.channel`
+
 <!-- YAML
 added: v7.1.0
 changes:
@@ -1250,6 +1271,7 @@ The `subprocess.channel` property is a reference to the child's IPC channel. If
 no IPC channel currently exists, this property is `undefined`.
 
 #### `subprocess.channel.ref()`
+
 <!-- YAML
 added: v7.1.0
 -->
@@ -1258,6 +1280,7 @@ This method makes the IPC channel keep the event loop of the parent process
 running if `.unref()` has been called before.
 
 #### `subprocess.channel.unref()`
+
 <!-- YAML
 added: v7.1.0
 -->
@@ -1266,6 +1289,7 @@ This method makes the IPC channel not keep the event loop of the parent process
 running, and lets it finish even while the channel is open.
 
 ### `subprocess.connected`
+
 <!-- YAML
 added: v0.7.2
 -->
@@ -1277,6 +1301,7 @@ send and receive messages from a child process. When `subprocess.connected` is
 `false`, it is no longer possible to send or receive messages.
 
 ### `subprocess.disconnect()`
+
 <!-- YAML
 added: v0.7.2
 -->
@@ -1303,6 +1328,7 @@ The `subprocess.exitCode` property indicates the exit code of the child process.
 If the child process is still running, the field will be `null`.
 
 ### `subprocess.kill([signal])`
+
 <!-- YAML
 added: v0.1.90
 -->
@@ -1370,6 +1396,7 @@ setTimeout(() => {
 ```
 
 ### `subprocess.killed`
+
 <!-- YAML
 added: v0.5.10
 -->
@@ -1382,6 +1409,7 @@ successfully received a signal from `subprocess.kill()`. The `killed` property
 does not indicate that the child process has been terminated.
 
 ### `subprocess.pid`
+
 <!-- YAML
 added: v0.1.90
 -->
@@ -1401,6 +1429,7 @@ grep.stdin.end();
 ```
 
 ### `subprocess.ref()`
+
 <!-- YAML
 added: v0.7.10
 -->
@@ -1422,6 +1451,7 @@ subprocess.ref();
 ```
 
 ### `subprocess.send(message[, sendHandle[, options]][, callback])`
+
 <!-- YAML
 added: v0.5.9
 changes:
@@ -1629,6 +1659,7 @@ For [`child_process.exec()`][],  its value will be the name of the shell
 in which the child process is launched.
 
 ### `subprocess.stderr`
+
 <!-- YAML
 added: v0.1.90
 -->
@@ -1647,6 +1678,7 @@ The `subprocess.stderr` property can be `null` if the child process could
 not be successfully spawned.
 
 ### `subprocess.stdin`
+
 <!-- YAML
 added: v0.1.90
 -->
@@ -1668,6 +1700,7 @@ The `subprocess.stdin` property can be `undefined` if the child process could
 not be successfully spawned.
 
 ### `subprocess.stdio`
+
 <!-- YAML
 added: v0.7.10
 -->
@@ -1711,6 +1744,7 @@ The `subprocess.stdio` property can be `undefined` if the child process could
 not be successfully spawned.
 
 ### `subprocess.stdout`
+
 <!-- YAML
 added: v0.1.90
 -->
@@ -1739,6 +1773,7 @@ The `subprocess.stdout` property can be `null` if the child process could
 not be successfully spawned.
 
 ### `subprocess.unref()`
+
 <!-- YAML
 added: v0.7.10
 -->
@@ -1784,6 +1819,7 @@ spawned, `'cmd.exe'` is used as a fallback if `process.env.ComSpec` is
 unavailable.
 
 ## Advanced serialization
+
 <!-- YAML
 added:
  - v13.2.0

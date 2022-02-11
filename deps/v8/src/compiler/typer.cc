@@ -882,9 +882,10 @@ bool Typer::Visitor::InductionVariablePhiTypeIsPrefixedPoint(
     InductionVariable* induction_var) {
   Node* node = induction_var->phi();
   DCHECK_EQ(node->opcode(), IrOpcode::kInductionVariablePhi);
+  Node* arith = node->InputAt(1);
   Type type = NodeProperties::GetType(node);
   Type initial_type = Operand(node, 0);
-  Node* arith = node->InputAt(1);
+  Type arith_type = Operand(node, 1);
   Type increment_type = Operand(node, 2);
 
   // Intersect {type} with useful bounds.
@@ -910,26 +911,30 @@ bool Typer::Visitor::InductionVariablePhiTypeIsPrefixedPoint(
     type = Type::Intersect(type, bound_type, typer_->zone());
   }
 
-  // Apply ordinary typing to the "increment" operation.
-  // clang-format off
-  switch (arith->opcode()) {
+  if (arith_type.IsNone()) {
+    type = Type::None();
+  } else {
+    // Apply ordinary typing to the "increment" operation.
+    // clang-format off
+    switch (arith->opcode()) {
 #define CASE(x)                             \
-    case IrOpcode::k##x:                    \
-      type = Type##x(type, increment_type); \
-      break;
-    CASE(JSAdd)
-    CASE(JSSubtract)
-    CASE(NumberAdd)
-    CASE(NumberSubtract)
-    CASE(SpeculativeNumberAdd)
-    CASE(SpeculativeNumberSubtract)
-    CASE(SpeculativeSafeIntegerAdd)
-    CASE(SpeculativeSafeIntegerSubtract)
+      case IrOpcode::k##x:                    \
+        type = Type##x(type, increment_type); \
+        break;
+      CASE(JSAdd)
+      CASE(JSSubtract)
+      CASE(NumberAdd)
+      CASE(NumberSubtract)
+      CASE(SpeculativeNumberAdd)
+      CASE(SpeculativeNumberSubtract)
+      CASE(SpeculativeSafeIntegerAdd)
+      CASE(SpeculativeSafeIntegerSubtract)
 #undef CASE
-    default:
-      UNREACHABLE();
+      default:
+        UNREACHABLE();
+    }
+    // clang-format on
   }
-  // clang-format on
 
   type = Type::Union(initial_type, type, typer_->zone());
 
@@ -1269,7 +1274,7 @@ Type Typer::Visitor::TypeJSCreateStringIterator(Node* node) {
 }
 
 Type Typer::Visitor::TypeJSCreateKeyValueArray(Node* node) {
-  return Type::OtherObject();
+  return Type::Array();
 }
 
 Type Typer::Visitor::TypeJSCreateObject(Node* node) {
@@ -1316,11 +1321,20 @@ Type Typer::Visitor::TypeJSGetTemplateObject(Node* node) {
   return Type::Array();
 }
 
-Type Typer::Visitor::TypeJSLoadProperty(Node* node) {
+Type Typer::Visitor::TypeJSLoadProperty(Node* node) { return Type::Any(); }
+
+Type Typer::Visitor::TypeJSLoadNamed(Node* node) {
+#ifdef DEBUG
+  // Loading of private methods is compiled to a named load of a BlockContext
+  // via a private brand, which is an internal object. However, native context
+  // specialization should always apply for those cases, so assert that the name
+  // is not a private brand here. Otherwise Type::NonInternal() is wrong.
+  JSLoadNamedNode n(node);
+  NamedAccess const& p = n.Parameters();
+  DCHECK(!p.name(typer_->broker()).object()->IsPrivateBrand());
+#endif
   return Type::NonInternal();
 }
-
-Type Typer::Visitor::TypeJSLoadNamed(Node* node) { return Type::NonInternal(); }
 
 Type Typer::Visitor::TypeJSLoadNamedFromSuper(Node* node) {
   return Type::NonInternal();
@@ -1414,6 +1428,8 @@ Type Typer::Visitor::Weaken(Node* node, Type current_type, Type previous_type) {
 }
 
 Type Typer::Visitor::TypeJSStoreProperty(Node* node) { UNREACHABLE(); }
+
+Type Typer::Visitor::TypeJSDefineProperty(Node* node) { UNREACHABLE(); }
 
 Type Typer::Visitor::TypeJSStoreNamed(Node* node) { UNREACHABLE(); }
 
@@ -1510,10 +1526,6 @@ Type Typer::Visitor::JSCallTyper(Type fun, Typer* t) {
     return Type::NonInternal();
   }
   JSFunctionRef function = fun.AsHeapConstant()->Ref().AsJSFunction();
-  if (!function.serialized()) {
-    TRACE_BROKER_MISSING(t->broker(), "data for function " << function);
-    return Type::NonInternal();
-  }
   if (!function.shared().HasBuiltinId()) {
     return Type::NonInternal();
   }
@@ -2068,10 +2080,6 @@ Type Typer::Visitor::TypeStringLength(Node* node) {
 }
 
 Type Typer::Visitor::TypeStringSubstring(Node* node) { return Type::String(); }
-
-Type Typer::Visitor::TypePoisonIndex(Node* node) {
-  return Type::Union(Operand(node, 0), typer_->cache_->kSingletonZero, zone());
-}
 
 Type Typer::Visitor::TypeCheckBounds(Node* node) {
   return typer_->operation_typer_.CheckBounds(Operand(node, 0),

@@ -1,4 +1,4 @@
-name: coverage-windows
+name: Coverage Windows
 
 on:
   pull_request:
@@ -9,19 +9,21 @@ on:
       - 'deps/**'
       - 'doc/**'
       - 'tools/**'
+      - .github/**
+      - '!.github/workflows/coverage-windows.yml'
   push:
-    branches:
-      - master
-      - main
+    branches: [master, main]
     paths-ignore:
       - '**.md'
       - 'benchmark/**'
       - 'deps/**'
       - 'doc/**'
       - 'tools/**'
+      - .github/**
+      - '!.github/workflows/coverage-windows.yml'
 
 env:
-  PYTHON_VERSION: 3.9
+  PYTHON_VERSION: '3.10'
   FLAKY_TESTS: dontcare
 
 jobs:
@@ -30,6 +32,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2
+        with:
+          persist-credentials: false
       - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v2
         with:

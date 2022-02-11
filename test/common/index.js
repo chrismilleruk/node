@@ -68,12 +68,12 @@ if (process.argv.length === 2 &&
     !process.env.NODE_SKIP_FLAG_CHECK &&
     isMainThread &&
     hasCrypto &&
-    require.main &&
-    require('cluster').isPrimary) {
+    require('cluster').isPrimary &&
+    fs.existsSync(process.argv[1])) {
   // The copyright notice is relatively big and the flags could come afterwards.
   const bytesToRead = 1500;
   const buffer = Buffer.allocUnsafe(bytesToRead);
-  const fd = fs.openSync(require.main.filename, 'r');
+  const fd = fs.openSync(process.argv[1], 'r');
   const bytesRead = fs.readSync(fd, buffer, 0, bytesToRead);
   fs.closeSync(fd);
   const source = buffer.toString('utf8', 0, bytesRead);
@@ -272,7 +272,7 @@ let knownGlobals = [
 
 // TODO(@jasnell): This check can be temporary. AbortController is
 // not currently supported in either Node.js 12 or 10, making it
-// difficult to run tests comparitively on those versions. Once
+// difficult to run tests comparatively on those versions. Once
 // all supported versions have AbortController as a global, this
 // check can be removed and AbortController can be added to the
 // knownGlobals list above.
@@ -298,6 +298,15 @@ if (global.PerformanceMeasure) {
 // can add this to the list above instead.
 if (global.structuredClone) {
   knownGlobals.push(global.structuredClone);
+}
+
+if (global.fetch) {
+  knownGlobals.push(
+    global.fetch,
+    global.Request,
+    global.Response,
+    global.Headers,
+  );
 }
 
 function allowGlobals(...allowlist) {
@@ -549,7 +558,11 @@ function _expectWarning(name, expected, code) {
     expected.forEach(([_, code]) => assert(code, expected));
   }
   return mustCall((warning) => {
-    const [ message, code ] = expected.shift();
+    const expectedProperties = expected.shift();
+    if (!expectedProperties) {
+      assert.fail(`Unexpected extra warning received: ${warning}`);
+    }
+    const [ message, code ] = expectedProperties;
     assert.strictEqual(warning.name, name);
     if (typeof message === 'string') {
       assert.strictEqual(warning.message, message);

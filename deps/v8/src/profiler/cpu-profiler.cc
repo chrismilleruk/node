@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "include/v8-locker.h"
 #include "src/base/lazy-instance.h"
 #include "src/base/template-utils.h"
 #include "src/debug/debug.h"
@@ -39,9 +40,10 @@ class CpuSampler : public sampler::Sampler {
 
   void SampleStack(const v8::RegisterState& regs) override {
     Isolate* isolate = reinterpret_cast<Isolate*>(this->isolate());
-    if (v8::Locker::IsActive() && (!isolate->thread_manager()->IsLockedByThread(
-                                       perThreadData_->thread_id()) ||
-                                   perThreadData_->thread_state() != nullptr)) {
+    if (v8::Locker::WasEverUsed() &&
+        (!isolate->thread_manager()->IsLockedByThread(
+             perThreadData_->thread_id()) ||
+         perThreadData_->thread_state() != nullptr)) {
       ProfilerStats::Instance()->AddReason(
           ProfilerStats::Reason::kIsolateNotLocked);
       return;
@@ -74,7 +76,7 @@ ProfilingScope::ProfilingScope(Isolate* isolate, ProfilerListener* listener)
   size_t profiler_count = isolate_->num_cpu_profilers();
   profiler_count++;
   isolate_->set_num_cpu_profilers(profiler_count);
-  isolate_->set_is_profiling(true);
+  isolate_->SetIsProfiling(true);
 #if V8_ENABLE_WEBASSEMBLY
   wasm::GetWasmEngine()->EnableCodeLogging(isolate_);
 #endif  // V8_ENABLE_WEBASSEMBLY
@@ -99,7 +101,7 @@ ProfilingScope::~ProfilingScope() {
   DCHECK_GT(profiler_count, 0);
   profiler_count--;
   isolate_->set_num_cpu_profilers(profiler_count);
-  if (profiler_count == 0) isolate_->set_is_profiling(false);
+  if (profiler_count == 0) isolate_->SetIsProfiling(false);
 }
 
 ProfilerEventsProcessor::ProfilerEventsProcessor(
@@ -188,7 +190,7 @@ void ProfilerEventsProcessor::StopSynchronously() {
 bool ProfilerEventsProcessor::ProcessCodeEvent() {
   CodeEventsContainer record;
   if (events_buffer_.Dequeue(&record)) {
-    if (record.generic.type == CodeEventRecord::NATIVE_CONTEXT_MOVE) {
+    if (record.generic.type == CodeEventRecord::Type::kNativeContextMove) {
       NativeContextMoveEventRecord& nc_record =
           record.NativeContextMoveEventRecord_;
       profiles_->UpdateNativeContextAddressForCurrentProfiles(
@@ -205,14 +207,14 @@ bool ProfilerEventsProcessor::ProcessCodeEvent() {
 void ProfilerEventsProcessor::CodeEventHandler(
     const CodeEventsContainer& evt_rec) {
   switch (evt_rec.generic.type) {
-    case CodeEventRecord::CODE_CREATION:
-    case CodeEventRecord::CODE_MOVE:
-    case CodeEventRecord::CODE_DISABLE_OPT:
-    case CodeEventRecord::CODE_DELETE:
-    case CodeEventRecord::NATIVE_CONTEXT_MOVE:
+    case CodeEventRecord::Type::kCodeCreation:
+    case CodeEventRecord::Type::kCodeMove:
+    case CodeEventRecord::Type::kCodeDisableOpt:
+    case CodeEventRecord::Type::kCodeDelete:
+    case CodeEventRecord::Type::kNativeContextMove:
       Enqueue(evt_rec);
       break;
-    case CodeEventRecord::CODE_DEOPT: {
+    case CodeEventRecord::Type::kCodeDeopt: {
       const CodeDeoptEventRecord* rec = &evt_rec.CodeDeoptEventRecord_;
       Address pc = rec->pc;
       int fp_to_sp_delta = rec->fp_to_sp_delta;
@@ -220,20 +222,23 @@ void ProfilerEventsProcessor::CodeEventHandler(
       AddDeoptStack(pc, fp_to_sp_delta);
       break;
     }
-    case CodeEventRecord::NONE:
-    case CodeEventRecord::REPORT_BUILTIN:
+    case CodeEventRecord::Type::kNoEvent:
+    case CodeEventRecord::Type::kReportBuiltin:
       UNREACHABLE();
   }
 }
 
 void SamplingEventsProcessor::SymbolizeAndAddToProfiles(
     const TickSampleEventRecord* record) {
+  const TickSample& tick_sample = record->sample;
   Symbolizer::SymbolizedSample symbolized =
-      symbolizer_->SymbolizeTickSample(record->sample);
+      symbolizer_->SymbolizeTickSample(tick_sample);
   profiles_->AddPathToCurrentProfiles(
-      record->sample.timestamp, symbolized.stack_trace, symbolized.src_line,
-      record->sample.update_stats, record->sample.sampling_interval,
-      reinterpret_cast<Address>(record->sample.context));
+      tick_sample.timestamp, symbolized.stack_trace, symbolized.src_line,
+      tick_sample.update_stats_, tick_sample.sampling_interval_,
+      tick_sample.state, tick_sample.embedder_state,
+      reinterpret_cast<Address>(tick_sample.context),
+      reinterpret_cast<Address>(tick_sample.embedder_context));
 }
 
 ProfilerEventsProcessor::SampleProcessingResult
@@ -361,12 +366,22 @@ void ProfilerCodeObserver::CodeEventHandler(
   CodeEventHandlerInternal(evt_rec);
 }
 
+size_t ProfilerCodeObserver::GetEstimatedMemoryUsage() const {
+  // To avoid race condition in codemap,
+  // for now limit computation in kEagerLogging mode
+  if (!processor_) {
+    return sizeof(*this) + code_map_.GetEstimatedMemoryUsage() +
+           code_entries_.strings().GetStringSize();
+  }
+  return 0;
+}
+
 void ProfilerCodeObserver::CodeEventHandlerInternal(
     const CodeEventsContainer& evt_rec) {
   CodeEventsContainer record = evt_rec;
   switch (evt_rec.generic.type) {
 #define PROFILER_TYPE_CASE(type, clss)        \
-  case CodeEventRecord::type:                 \
+  case CodeEventRecord::Type::type:           \
     record.clss##_.UpdateCodeMap(&code_map_); \
     break;
 
@@ -396,7 +411,7 @@ void ProfilerCodeObserver::LogBuiltins() {
   DCHECK(builtins->is_initialized());
   for (Builtin builtin = Builtins::kFirst; builtin <= Builtins::kLast;
        ++builtin) {
-    CodeEventsContainer evt_rec(CodeEventRecord::REPORT_BUILTIN);
+    CodeEventsContainer evt_rec(CodeEventRecord::Type::kReportBuiltin);
     ReportBuiltinEventRecord* rec = &evt_rec.ReportBuiltinEventRecord_;
     Code code = builtins->code(builtin);
     rec->instruction_start = code.InstructionStart();
@@ -457,6 +472,16 @@ class CpuProfilersManager {
     for (auto it = range.first; it != range.second; ++it) {
       it->second->CollectSample();
     }
+  }
+
+  size_t GetAllProfilersMemorySize(Isolate* isolate) {
+    base::MutexGuard lock(&mutex_);
+    size_t estimated_memory = 0;
+    auto range = profilers_.equal_range(isolate);
+    for (auto it = range.first; it != range.second; ++it) {
+      estimated_memory += it->second->GetEstimatedMemoryUsage();
+    }
+    return estimated_memory;
   }
 
  private:
@@ -564,6 +589,15 @@ void CpuProfiler::CollectSample() {
   if (processor_) {
     processor_->AddCurrentStack();
   }
+}
+
+// static
+size_t CpuProfiler::GetAllProfilersMemorySize(Isolate* isolate) {
+  return GetProfilersManager()->GetAllProfilersMemorySize(isolate);
+}
+
+size_t CpuProfiler::GetEstimatedMemoryUsage() const {
+  return code_observer_->GetEstimatedMemoryUsage();
 }
 
 CpuProfilingStatus CpuProfiler::StartProfiling(

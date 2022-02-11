@@ -53,10 +53,10 @@ void InitExprInterface::RefNull(FullDecoder* decoder, ValueType type,
 void InitExprInterface::RefFunc(FullDecoder* decoder, uint32_t function_index,
                                 Value* result) {
   if (isolate_ != nullptr) {
-    auto function = WasmInstanceObject::GetOrCreateWasmExternalFunction(
+    auto internal = WasmInstanceObject::GetOrCreateWasmInternalFunction(
         isolate_, instance_, function_index);
     result->runtime_value = WasmValue(
-        function, ValueType::Ref(module_->functions[function_index].sig_index,
+        internal, ValueType::Ref(module_->functions[function_index].sig_index,
                                  kNonNullable));
   } else {
     outer_module_->functions[function_index].declared = true;
@@ -81,6 +81,48 @@ void InitExprInterface::StructNewWithRtt(
   std::vector<WasmValue> field_values(imm.struct_type->field_count());
   for (size_t i = 0; i < field_values.size(); i++) {
     field_values[i] = args[i].runtime_value;
+  }
+  result->runtime_value =
+      WasmValue(isolate_->factory()->NewWasmStruct(
+                    imm.struct_type, field_values.data(),
+                    Handle<Map>::cast(rtt.runtime_value.to_ref())),
+                ValueType::Ref(HeapType(imm.index), kNonNullable));
+}
+
+namespace {
+WasmValue DefaultValueForType(ValueType type, Isolate* isolate) {
+  switch (type.kind()) {
+    case kI32:
+    case kI8:
+    case kI16:
+      return WasmValue(0);
+    case kI64:
+      return WasmValue(int64_t{0});
+    case kF32:
+      return WasmValue(0.0f);
+    case kF64:
+      return WasmValue(0.0);
+    case kS128:
+      return WasmValue(Simd128());
+    case kOptRef:
+      return WasmValue(isolate->factory()->null_value(), type);
+    case kVoid:
+    case kRtt:
+    case kRttWithDepth:
+    case kRef:
+    case kBottom:
+      UNREACHABLE();
+  }
+}
+}  // namespace
+
+void InitExprInterface::StructNewDefault(
+    FullDecoder* decoder, const StructIndexImmediate<validate>& imm,
+    const Value& rtt, Value* result) {
+  if (isolate_ == nullptr) return;
+  std::vector<WasmValue> field_values(imm.struct_type->field_count());
+  for (uint32_t i = 0; i < field_values.size(); i++) {
+    field_values[i] = DefaultValueForType(imm.struct_type->field(i), isolate_);
   }
   result->runtime_value =
       WasmValue(isolate_->factory()->NewWasmStruct(

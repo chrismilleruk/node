@@ -55,10 +55,10 @@ void JSArrayBuffer::Setup(SharedFlag shared, ResizableFlag resizable,
     SetEmbedderField(i, Smi::zero());
   }
   set_extension(nullptr);
-  AllocateExternalPointerEntries(GetIsolate());
   if (!backing_store) {
-    set_backing_store(GetIsolate(), nullptr);
+    set_backing_store(GetIsolate(), EmptyBackingStoreBuffer());
     set_byte_length(0);
+    set_max_byte_length(0);
   } else {
     Attach(std::move(backing_store));
   }
@@ -72,9 +72,20 @@ void JSArrayBuffer::Attach(std::shared_ptr<BackingStore> backing_store) {
   DCHECK_NOT_NULL(backing_store);
   DCHECK_EQ(is_shared(), backing_store->is_shared());
   DCHECK_EQ(is_resizable(), backing_store->is_resizable());
+  DCHECK_IMPLIES(
+      !backing_store->is_wasm_memory() && !backing_store->is_resizable(),
+      backing_store->byte_length() == backing_store->max_byte_length());
   DCHECK(!was_detached());
+  DCHECK(IsValidBackingStorePointer(backing_store->buffer_start()));
   Isolate* isolate = GetIsolate();
-  set_backing_store(isolate, backing_store->buffer_start());
+
+  if (backing_store->IsEmpty()) {
+    set_backing_store(isolate, EmptyBackingStoreBuffer());
+  } else {
+    DCHECK_NE(nullptr, backing_store->buffer_start());
+    set_backing_store(isolate, backing_store->buffer_start());
+  }
+
   if (is_shared() && is_resizable()) {
     // GSABs need to read their byte_length from the BackingStore. Maintain the
     // invariant that their byte_length field is always 0.
@@ -82,14 +93,14 @@ void JSArrayBuffer::Attach(std::shared_ptr<BackingStore> backing_store) {
   } else {
     set_byte_length(backing_store->byte_length());
   }
+  set_max_byte_length(backing_store->max_byte_length());
   if (backing_store->is_wasm_memory()) set_is_detachable(false);
   if (!backing_store->free_on_destruct()) set_is_external(true);
-  Heap* heap = isolate->heap();
   ArrayBufferExtension* extension = EnsureExtension();
   size_t bytes = backing_store->PerIsolateAccountingLength();
   extension->set_accounting_length(bytes);
   extension->set_backing_store(std::move(backing_store));
-  heap->AppendArrayBufferExtension(*this, extension);
+  isolate->heap()->AppendArrayBufferExtension(*this, extension);
 }
 
 void JSArrayBuffer::Detach(bool force_for_wasm_memory) {
@@ -118,14 +129,22 @@ void JSArrayBuffer::Detach(bool force_for_wasm_memory) {
 
   DCHECK(!is_shared());
   DCHECK(!is_asmjs_memory());
-  set_backing_store(isolate, nullptr);
+  set_backing_store(isolate, EmptyBackingStoreBuffer());
   set_byte_length(0);
   set_was_detached(true);
 }
 
-std::shared_ptr<BackingStore> JSArrayBuffer::GetBackingStore() {
-    if (!extension()) return nullptr;
-    return extension()->backing_store();
+size_t JSArrayBuffer::GsabByteLength(Isolate* isolate,
+                                     Address raw_array_buffer) {
+  // TODO(v8:11111): Cache the last seen length in JSArrayBuffer and use it
+  // in bounds checks to minimize the need for calling this function.
+  DCHECK(FLAG_harmony_rab_gsab);
+  DisallowGarbageCollection no_gc;
+  DisallowJavascriptExecution no_js(isolate);
+  JSArrayBuffer buffer = JSArrayBuffer::cast(Object(raw_array_buffer));
+  CHECK(buffer.is_resizable());
+  CHECK(buffer.is_shared());
+  return buffer.GetBackingStore()->byte_length(std::memory_order_seq_cst);
 }
 
 ArrayBufferExtension* JSArrayBuffer::EnsureExtension() {
@@ -181,7 +200,7 @@ Handle<JSArrayBuffer> JSTypedArray::GetBuffer() {
   DCHECK(!array_buffer->is_resizable());
 
   // The existing array buffer should be empty.
-  DCHECK_NULL(array_buffer->backing_store());
+  DCHECK(array_buffer->IsEmpty());
 
   // Allocate a new backing store and attach it to the existing array buffer.
   size_t byte_length = self->byte_length();
@@ -222,11 +241,12 @@ Maybe<bool> JSTypedArray::DefineOwnProperty(Isolate* isolate,
   // 2. Assert: O is an Object that has a [[ViewedArrayBuffer]] internal slot.
   // 3. If Type(P) is String, then
   PropertyKey lookup_key(isolate, key);
-  if (lookup_key.is_element() || key->IsString()) {
+  if (lookup_key.is_element() || key->IsSmi() || key->IsString()) {
     // 3a. Let numericIndex be ! CanonicalNumericIndexString(P)
     // 3b. If numericIndex is not undefined, then
-    bool is_minus_zero;
-    if (CanonicalNumericIndexString(isolate, lookup_key, &is_minus_zero)) {
+    bool is_minus_zero = false;
+    if (key->IsSmi() ||  // Smi keys are definitely canonical
+        CanonicalNumericIndexString(isolate, lookup_key, &is_minus_zero)) {
       // 3b i. If IsInteger(numericIndex) is false, return false.
       // 3b ii. If numericIndex = -0, return false.
       // 3b iii. If numericIndex < 0, return false.

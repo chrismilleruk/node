@@ -70,7 +70,7 @@ export class SourcePosition {
 
 export class Script {
   url;
-  source;
+  source = "";
   name;
   sourcePosition = undefined;
   // Map<line, Map<column, SourcePosition>>
@@ -106,7 +106,7 @@ export class Script {
   }
 
   findFunctionSourcePosition(sourcePosition) {
-    // TODO(cbruni) implmenent
+    // TODO(cbruni): implement
     return undefined;
   }
 
@@ -116,8 +116,9 @@ export class Script {
       sourcePosition = new SourcePosition(this, line, column,)
       this._addSourcePosition(line, column, sourcePosition);
     }
-    if (entry.entry?.type == "Script") {
-      // Mark the source position of scripts, for inline scripts which
+    if (this.sourcePosition === undefined && entry.entry?.type === "Script") {
+      // Mark the source position of scripts, for inline scripts which don't
+      // start at line 1.
       this.sourcePosition = sourcePosition;
     }
     sourcePosition.addEntry(entry);

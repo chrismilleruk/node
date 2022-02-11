@@ -291,6 +291,7 @@ class V8_EXPORT_PRIVATE NativeModuleSerializer {
   const base::Vector<WasmCode* const> code_table_;
   bool write_called_ = false;
   size_t total_written_code_ = 0;
+  int num_turbofan_functions_ = 0;
 };
 
 NativeModuleSerializer::NativeModuleSerializer(
@@ -303,8 +304,8 @@ NativeModuleSerializer::NativeModuleSerializer(
 
 size_t NativeModuleSerializer::MeasureCode(const WasmCode* code) const {
   if (code == nullptr) return sizeof(bool);
-  DCHECK_EQ(WasmCode::kFunction, code->kind());
-  if (FLAG_wasm_lazy_compilation && code->tier() != ExecutionTier::kTurbofan) {
+  DCHECK_EQ(WasmCode::kWasmFunction, code->kind());
+  if (code->tier() != ExecutionTier::kTurbofan) {
     return sizeof(bool);
   }
   return kCodeHeaderSize + code->instructions().size() +
@@ -334,16 +335,14 @@ bool NativeModuleSerializer::WriteCode(const WasmCode* code, Writer* writer) {
     writer->Write(false);
     return true;
   }
-  DCHECK_EQ(WasmCode::kFunction, code->kind());
+  DCHECK_EQ(WasmCode::kWasmFunction, code->kind());
   // Only serialize TurboFan code, as Liftoff code can contain breakpoints or
   // non-relocatable constants.
   if (code->tier() != ExecutionTier::kTurbofan) {
-    if (FLAG_wasm_lazy_compilation) {
-      writer->Write(false);
-      return true;
-    }
-    return false;
+    writer->Write(false);
+    return true;
   }
+  ++num_turbofan_functions_;
   writer->Write(true);
   // Write the size of the entire code section, followed by the code header.
   writer->Write(code->constant_pool_offset());
@@ -452,6 +451,8 @@ bool NativeModuleSerializer::Write(Writer* writer) {
   for (WasmCode* code : code_table_) {
     if (!WriteCode(code, writer)) return false;
   }
+  // If not a single function was written, serialization was not successful.
+  if (num_turbofan_functions_ == 0) return false;
 
   // Make sure that the serialized total code size was correct.
   CHECK_EQ(total_written_code_, total_code_size);
@@ -536,6 +537,10 @@ class V8_EXPORT_PRIVATE NativeModuleDeserializer {
 
   bool Read(Reader* reader);
 
+  base::Vector<const int> missing_functions() {
+    return base::VectorOf(missing_functions_);
+  }
+
  private:
   friend class CopyAndRelocTask;
   friend class PublishTask;
@@ -554,6 +559,7 @@ class V8_EXPORT_PRIVATE NativeModuleDeserializer {
   size_t remaining_code_size_ = 0;
   base::Vector<byte> current_code_space_;
   NativeModule::JumpTablesRef current_jump_tables_;
+  std::vector<int> missing_functions_;
 };
 
 class CopyAndRelocTask : public JobTask {
@@ -648,6 +654,7 @@ bool NativeModuleDeserializer::Read(Reader* reader) {
 
   std::vector<DeserializationUnit> batch;
   const byte* batch_start = reader->current_location();
+  CodeSpaceWriteScope code_space_write_scope(native_module_);
   for (uint32_t i = first_wasm_fn; i < total_fns; ++i) {
     DeserializationUnit unit = ReadCode(i, reader);
     if (!unit.code) continue;
@@ -687,9 +694,7 @@ DeserializationUnit NativeModuleDeserializer::ReadCode(int fn_index,
                                                        Reader* reader) {
   bool has_code = reader->Read<bool>();
   if (!has_code) {
-    DCHECK(FLAG_wasm_lazy_compilation ||
-           native_module_->enabled_features().has_compilation_hints());
-    native_module_->UseLazyStub(fn_index);
+    missing_functions_.push_back(fn_index);
     return {};
   }
   int constant_pool_offset = reader->Read<int>();
@@ -862,9 +867,14 @@ MaybeHandle<WasmModuleObject> DeserializeNativeModule(
     NativeModuleDeserializer deserializer(shared_native_module.get());
     Reader reader(data + WasmSerializer::kHeaderSize);
     bool error = !deserializer.Read(&reader);
-    shared_native_module->compilation_state()->InitializeAfterDeserialization();
+    if (error) {
+      wasm_engine->UpdateNativeModuleCache(error, &shared_native_module,
+                                           isolate);
+      return {};
+    }
+    shared_native_module->compilation_state()->InitializeAfterDeserialization(
+        deserializer.missing_functions());
     wasm_engine->UpdateNativeModuleCache(error, &shared_native_module, isolate);
-    if (error) return {};
   }
 
   Handle<FixedArray> export_wrappers;

@@ -208,6 +208,37 @@ int CallDescriptor::CalculateFixedFrameSize(CodeKind code_kind) const {
   UNREACHABLE();
 }
 
+EncodedCSignature CallDescriptor::ToEncodedCSignature() const {
+  int parameter_count = static_cast<int>(ParameterCount());
+  EncodedCSignature sig(parameter_count);
+  CHECK_LT(parameter_count, EncodedCSignature::kInvalidParamCount);
+
+  for (int i = 0; i < parameter_count; ++i) {
+    if (IsFloatingPoint(GetParameterType(i).representation())) {
+      sig.SetFloat(i);
+    }
+  }
+  if (ReturnCount() > 0) {
+    DCHECK_EQ(1, ReturnCount());
+    if (IsFloatingPoint(GetReturnType(0).representation())) {
+      sig.SetFloat(EncodedCSignature::kReturnIndex);
+    }
+  }
+  return sig;
+}
+
+void CallDescriptor::ComputeParamCounts() const {
+  gp_param_count_ = 0;
+  fp_param_count_ = 0;
+  for (size_t i = 0; i < ParameterCount(); ++i) {
+    if (IsFloatingPoint(GetParameterType(i).representation())) {
+      ++fp_param_count_.value();
+    } else {
+      ++gp_param_count_.value();
+    }
+  }
+}
+
 CallDescriptor* Linkage::ComputeIncoming(Zone* zone,
                                          OptimizedCompilationInfo* info) {
 #if V8_ENABLE_WEBASSEMBLY
@@ -219,9 +250,10 @@ CallDescriptor* Linkage::ComputeIncoming(Zone* zone,
     // If we are compiling a JS function, use a JS call descriptor,
     // plus the receiver.
     SharedFunctionInfo shared = info->closure()->shared();
-    return GetJSCallDescriptor(zone, info->is_osr(),
-                               1 + shared.internal_formal_parameter_count(),
-                               CallDescriptor::kCanUseRoots);
+    return GetJSCallDescriptor(
+        zone, info->is_osr(),
+        shared.internal_formal_parameter_count_with_receiver(),
+        CallDescriptor::kCanUseRoots);
   }
   return nullptr;  // TODO(titzer): ?
 }
@@ -244,6 +276,7 @@ bool Linkage::NeedsFrameStateInput(Runtime::FunctionId function) {
     case Runtime::kPushBlockContext:
     case Runtime::kPushCatchContext:
     case Runtime::kReThrow:
+    case Runtime::kReThrowWithMessage:
     case Runtime::kStringEqual:
     case Runtime::kStringLessThan:
     case Runtime::kStringLessThanOrEqual:
@@ -504,6 +537,9 @@ CallDescriptor* Linkage::GetStubCallDescriptor(
       CallDescriptor::kCanUseRoots | flags,  // flags
       descriptor.DebugName(),                // debug name
       descriptor.GetStackArgumentOrder(),    // stack order
+#if V8_ENABLE_WEBASSEMBLY
+      nullptr,  // wasm function signature
+#endif
       allocatable_registers);
 }
 

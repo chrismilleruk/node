@@ -138,7 +138,9 @@ class FixedArray
   inline void set(int index, Smi value);
 #else
   inline void set(int index, Smi value) {
+#if !defined(_WIN32)
     DCHECK_NE(map(), GetReadOnlyRoots().fixed_cow_array_map());
+#endif
     DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
     DCHECK(Object(value).IsSmi());
     int offset = OffsetOfElementAt(index);
@@ -296,6 +298,10 @@ class WeakFixedArray
       int index, MaybeObject value,
       WriteBarrierMode mode = WriteBarrierMode::UPDATE_WRITE_BARRIER);
 
+  static inline Handle<WeakFixedArray> EnsureSpace(Isolate* isolate,
+                                                   Handle<WeakFixedArray> array,
+                                                   int length);
+
   // Forward declare the non-atomic (set_)length defined in torque.
   using TorqueGeneratedWeakFixedArray::length;
   using TorqueGeneratedWeakFixedArray::set_length;
@@ -374,6 +380,7 @@ class WeakArrayList
   // instead.
   inline void Set(int index, MaybeObject value,
                   WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
+  inline void Set(int index, Smi value);
 
   static constexpr int SizeForCapacity(int capacity) {
     return SizeFor(capacity);
@@ -487,12 +494,13 @@ class ArrayList : public TorqueGeneratedArrayList<ArrayList, FixedArray> {
 
   static const int kHeaderFields = 1;
 
- private:
-  static Handle<ArrayList> EnsureSpace(Isolate* isolate,
-                                       Handle<ArrayList> array, int length);
   static const int kLengthIndex = 0;
   static const int kFirstIndex = 1;
   STATIC_ASSERT(kHeaderFields == kFirstIndex);
+
+ private:
+  static Handle<ArrayList> EnsureSpace(Isolate* isolate,
+                                       Handle<ArrayList> array, int length);
   TQ_OBJECT_CONSTRUCTORS(ArrayList)
 };
 
@@ -514,8 +522,8 @@ class ByteArray : public TorqueGeneratedByteArray<ByteArray, FixedArrayBase> {
   inline void set(int index, byte value);
 
   // Copy in / copy out whole byte slices.
-  inline void copy_out(int index, byte* buffer, int length);
-  inline void copy_in(int index, const byte* buffer, int length);
+  inline void copy_out(int index, byte* buffer, int slice_length);
+  inline void copy_in(int index, const byte* buffer, int slice_length);
 
   // Treat contents as an int array.
   inline int get_int(int index) const;
@@ -526,6 +534,9 @@ class ByteArray : public TorqueGeneratedByteArray<ByteArray, FixedArrayBase> {
 
   inline uint32_t get_uint32_relaxed(int index) const;
   inline void set_uint32_relaxed(int index, uint32_t value);
+
+  inline uint16_t get_uint16(int index) const;
+  inline void set_uint16(int index, uint16_t value);
 
   // Clear uninitialized padding space. This ensures that the snapshot content
   // is deterministic.

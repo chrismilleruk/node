@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --experimental-d8-web-snapshot-api
+// Flags: --experimental-d8-web-snapshot-api --allow-natives-syntax
+
 
 function use(exports) {
   const result = Object.create(null);
@@ -13,13 +14,13 @@ function use(exports) {
 function takeAndUseWebSnapshot(createObjects, exports) {
   // Take a snapshot in Realm r1.
   const r1 = Realm.create();
-  Realm.eval(r1, createObjects, {type: 'function'});
+  Realm.eval(r1, createObjects, { type: 'function' });
   const snapshot = Realm.takeWebSnapshot(r1, exports);
   // Use the snapshot in Realm r2.
   const r2 = Realm.create();
   const success = Realm.useWebSnapshot(r2, snapshot);
   assertTrue(success);
-  return Realm.eval(r2, use, {type: 'function', arguments: [exports]});
+  return Realm.eval(r2, use, { type: 'function', arguments: [exports] });
 }
 
 (function TestMinimal() {
@@ -96,6 +97,34 @@ function takeAndUseWebSnapshot(createObjects, exports) {
   const { a, b } = takeAndUseWebSnapshot(createObjects, ['a', 'b']);
   assertTrue(a);
   assertFalse(b);
+})();
+
+(function TestStringWithNull() {
+  function createObjects() {
+    globalThis.s = 'l\0l';
+  }
+  const { s } = takeAndUseWebSnapshot(createObjects, ['s']);
+  assertEquals(108, s.charCodeAt(0));
+  assertEquals(0, s.charCodeAt(1));
+  assertEquals(108, s.charCodeAt(2));
+})();
+
+(function TestTwoByteString() {
+  function createObjects() {
+    globalThis.s = '\u{1F600}';
+  }
+  const { s } = takeAndUseWebSnapshot(createObjects, ['s']);
+  assertEquals('\u{1F600}', s);
+})();
+
+(function TestTwoByteStringWithNull() {
+  function createObjects() {
+    globalThis.s = 'l\0l\u{1F600}';
+  }
+  const { s } = takeAndUseWebSnapshot(createObjects, ['s']);
+  assertEquals(108, s.charCodeAt(0));
+  assertEquals(0, s.charCodeAt(1));
+  assertEquals(108, s.charCodeAt(2));
 })();
 
 (function TestFunction() {
@@ -191,7 +220,7 @@ function takeAndUseWebSnapshot(createObjects, exports) {
 (function TestObjectReferencingObject() {
   function createObjects() {
     globalThis.foo = {
-      bar: {baz: 11525}
+      bar: { baz: 11525 }
     };
   }
   const { foo } = takeAndUseWebSnapshot(createObjects, ['foo']);
@@ -201,7 +230,7 @@ function takeAndUseWebSnapshot(createObjects, exports) {
 (function TestContextReferencingObject() {
   function createObjects() {
     function outer() {
-      let o = {value: 11525};
+      let o = { value: 11525 };
       function inner() { return o; }
       return inner;
     }
@@ -234,7 +263,7 @@ function takeAndUseWebSnapshot(createObjects, exports) {
   assertEquals([5, 6, 7], foo.array);
 })();
 
-(function TestArray() {
+(function TestEmptyArray() {
   function createObjects() {
     globalThis.foo = {
       array: []
@@ -255,11 +284,10 @@ function takeAndUseWebSnapshot(createObjects, exports) {
   assertEquals([[2, 3], [4, 5]], foo.array);
 })();
 
-
 (function TestArrayContainingObject() {
   function createObjects() {
     globalThis.foo = {
-      array: [{a: 1}, {b: 2}]
+      array: [{ a: 1 }, { b: 2 }]
     };
   }
   const { foo } = takeAndUseWebSnapshot(createObjects, ['foo']);
@@ -270,13 +298,12 @@ function takeAndUseWebSnapshot(createObjects, exports) {
 (function TestArrayContainingFunction() {
   function createObjects() {
     globalThis.foo = {
-      array: [function() { return 5; }]
+      array: [function () { return 5; }]
     };
   }
   const { foo } = takeAndUseWebSnapshot(createObjects, ['foo']);
   assertEquals(5, foo.array[0]());
 })();
-
 
 (function TestContextReferencingArray() {
   function createObjects() {
@@ -291,4 +318,98 @@ function takeAndUseWebSnapshot(createObjects, exports) {
   }
   const { foo } = takeAndUseWebSnapshot(createObjects, ['foo']);
   assertEquals(11525, foo.func()[0]);
+})();
+
+(function TestEmptyClass() {
+  function createObjects() {
+    globalThis.Foo = class Foo { };
+  }
+  const { Foo } = takeAndUseWebSnapshot(createObjects, ['Foo']);
+  const x = new Foo();
+})();
+
+(function TestClassWithConstructor() {
+  function createObjects() {
+    globalThis.Foo = class {
+      constructor() {
+        this.n = 42;
+      }
+    };
+  }
+  const { Foo } = takeAndUseWebSnapshot(createObjects, ['Foo']);
+  const x = new Foo(2);
+  assertEquals(42, x.n);
+})();
+
+(function TestClassWithMethods() {
+  function createObjects() {
+    globalThis.Foo = class {
+      f() { return 7; };
+    };
+  }
+  const { Foo } = takeAndUseWebSnapshot(createObjects, ['Foo']);
+  const x = new Foo();
+  assertEquals(7, x.f());
+})();
+
+(async function TestClassWithAsyncMethods() {
+  function createObjects() {
+    globalThis.Foo = class {
+      async g() { return 6; };
+    };
+  }
+  const { Foo } = takeAndUseWebSnapshot(createObjects, ['Foo']);
+  const x = new Foo();
+  assertEquals(6, await x.g());
+})();
+
+(function TwoExportedObjects() {
+  function createObjects() {
+    globalThis.one = {x: 1};
+    globalThis.two = {x: 2};
+  }
+  const { one, two } = takeAndUseWebSnapshot(createObjects, ['one', 'two']);
+  assertEquals(1, one.x);
+  assertEquals(2, two.x);
+})();
+
+(function TestOptimizingFunctionFromSnapshot() {
+  function createObjects() {
+    globalThis.f = function(a, b) { return a + b; }
+  }
+  const { f } = takeAndUseWebSnapshot(createObjects, ['f']);
+  %PrepareFunctionForOptimization(f);
+  assertEquals(3, f(1, 2));
+  %OptimizeFunctionOnNextCall(f);
+  assertEquals(4, f(1, 3));
+})();
+
+(function TestOptimizingConstructorFromSnapshot() {
+  function createObjects() {
+    globalThis.C = class {
+      constructor(a, b) {
+        this.x = a + b;
+      }
+    }
+  }
+  const { C } = takeAndUseWebSnapshot(createObjects, ['C']);
+  %PrepareFunctionForOptimization(C);
+  assertEquals(3, new C(1, 2).x);
+  %OptimizeFunctionOnNextCall(C);
+  assertEquals(4, new C(1, 3).x);
+})();
+
+(function TestFunctionPrototype() {
+  function createObjects() {
+    globalThis.F = function(p1, p2) {
+      this.x = p1 + p2;
+    }
+    globalThis.F.prototype.m = function(p1, p2) {
+      return this.x + p1 + p2;
+    }
+  }
+  const { F } = takeAndUseWebSnapshot(createObjects, ['F']);
+  const o = new F(1, 2);
+  assertEquals(3, o.x);
+  assertEquals(10, o.m(3, 4));
 })();

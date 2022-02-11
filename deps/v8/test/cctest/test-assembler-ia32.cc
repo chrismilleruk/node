@@ -27,6 +27,7 @@
 
 #include <stdlib.h>
 
+#include "include/v8-function.h"
 #include "src/base/platform/platform.h"
 #include "src/base/utils/random-number-generator.h"
 #include "src/codegen/assembler-inl.h"
@@ -223,7 +224,7 @@ TEST(AssemblerIa325) {
   Assembler assm(AssemblerOptions{},
                  ExternalAssemblerBuffer(buffer, sizeof buffer));
 
-  __ mov(eax, Operand(reinterpret_cast<intptr_t>(&baz), RelocInfo::NONE));
+  __ mov(eax, Operand(reinterpret_cast<intptr_t>(&baz), RelocInfo::NO_INFO));
   __ ret(0);
 
   CodeDesc desc;

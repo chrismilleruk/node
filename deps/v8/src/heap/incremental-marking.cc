@@ -47,13 +47,15 @@ void IncrementalMarking::Observer::Step(int bytes_allocated, Address addr,
   incremental_marking_->EnsureBlackAllocated(addr, size);
 }
 
-IncrementalMarking::IncrementalMarking(Heap* heap,
-                                       WeakObjects* weak_objects)
+IncrementalMarking::IncrementalMarking(Heap* heap, WeakObjects* weak_objects)
     : heap_(heap),
       collector_(heap->mark_compact_collector()),
       weak_objects_(weak_objects),
       new_generation_observer_(this, kYoungGenerationAllocatedThreshold),
-      old_generation_observer_(this, kOldGenerationAllocatedThreshold) {
+      old_generation_observer_(this, kOldGenerationAllocatedThreshold),
+      marking_state_(heap->isolate()),
+      atomic_marking_state_(heap->isolate()),
+      non_atomic_marking_state_(heap->isolate()) {
   SetState(STOPPED);
 }
 
@@ -63,13 +65,6 @@ void IncrementalMarking::MarkBlackAndVisitObjectDueToLayoutChange(
   TRACE_GC(heap()->tracer(), GCTracer::Scope::MC_INCREMENTAL_LAYOUT_CHANGE);
   marking_state()->WhiteToGrey(obj);
   collector_->VisitObject(obj);
-}
-
-void IncrementalMarking::MarkBlackAndRevisitObject(Code code) {
-  TRACE_EVENT0("v8", "V8.GCIncrementalMarkingLayoutChange");
-  TRACE_GC(heap()->tracer(), GCTracer::Scope::MC_INCREMENTAL_LAYOUT_CHANGE);
-  marking_state()->WhiteToBlack(code);
-  collector_->RevisitObject(code);
 }
 
 void IncrementalMarking::MarkBlackBackground(HeapObject obj, int object_size) {
@@ -116,19 +111,19 @@ class IncrementalMarkingRootMarkingVisitor : public RootVisitor {
   void VisitRootPointer(Root root, const char* description,
                         FullObjectSlot p) override {
     DCHECK(!MapWord::IsPacked((*p).ptr()));
-    MarkObjectByPointer(p);
+    MarkObjectByPointer(root, p);
   }
 
   void VisitRootPointers(Root root, const char* description,
                          FullObjectSlot start, FullObjectSlot end) override {
     for (FullObjectSlot p = start; p < end; ++p) {
       DCHECK(!MapWord::IsPacked((*p).ptr()));
-      MarkObjectByPointer(p);
+      MarkObjectByPointer(root, p);
     }
   }
 
  private:
-  void MarkObjectByPointer(FullObjectSlot p) {
+  void MarkObjectByPointer(Root root, FullObjectSlot p) {
     Object object = *p;
     if (!object.IsHeapObject()) return;
     DCHECK(!MapWord::IsPacked(object.ptr()));
@@ -136,7 +131,7 @@ class IncrementalMarkingRootMarkingVisitor : public RootVisitor {
     BasicMemoryChunk* target_page =
         BasicMemoryChunk::FromHeapObject(heap_object);
     if (target_page->InSharedHeap()) return;
-    heap_->incremental_marking()->WhiteToGreyAndPush(heap_object);
+    heap_->incremental_marking()->MarkRootObject(root, heap_object);
   }
 
   Heap* heap_;
@@ -159,7 +154,7 @@ bool IncrementalMarking::CanBeActivated() {
 
 bool IncrementalMarking::IsBelowActivationThresholds() const {
   return heap_->OldGenerationSizeOfObjects() <= kV8ActivationThreshold &&
-         heap_->GlobalSizeOfObjects() <= kGlobalActivationThreshold;
+         heap_->EmbedderSizeOfObjects() <= kEmbedderActivationThreshold;
 }
 
 void IncrementalMarking::Start(GarbageCollectionReason gc_reason) {
@@ -194,7 +189,7 @@ void IncrementalMarking::Start(GarbageCollectionReason gc_reason) {
 
   counters->incremental_marking_reason()->AddSample(
       static_cast<int>(gc_reason));
-  HistogramTimerScope incremental_marking_scope(
+  NestedTimedHistogramScope incremental_marking_scope(
       counters->gc_incremental_marking_start());
   TRACE_EVENT1("v8", "V8.GCIncrementalMarkingStart", "epoch",
                heap_->epoch_full());
@@ -238,7 +233,8 @@ void IncrementalMarking::StartMarking() {
 
   heap_->InvokeIncrementalMarkingPrologueCallbacks();
 
-  is_compacting_ = !FLAG_never_compact && collector_->StartCompaction();
+  is_compacting_ = collector_->StartCompaction(
+      MarkCompactCollector::StartCompactionMode::kIncremental);
   collector_->StartMarking();
 
   SetState(MARKING);
@@ -442,6 +438,7 @@ void IncrementalMarking::UpdateMarkingWorklistAfterScavenge() {
 
   collector_->local_marking_worklists()->Publish();
   MarkingBarrier::PublishAll(heap());
+  PtrComprCageBase cage_base(heap_->isolate());
   collector_->marking_worklists()->Update(
       [
 #ifdef DEBUG
@@ -451,11 +448,11 @@ void IncrementalMarking::UpdateMarkingWorklistAfterScavenge() {
 #ifdef ENABLE_MINOR_MC
           minor_marking_state,
 #endif
-          filler_map](HeapObject obj, HeapObject* out) -> bool {
+          cage_base, filler_map](HeapObject obj, HeapObject* out) -> bool {
         DCHECK(obj.IsHeapObject());
         // Only pointers to from space have to be updated.
         if (Heap::InFromPage(obj)) {
-          MapWord map_word = obj.map_word(kRelaxedLoad);
+          MapWord map_word = obj.map_word(cage_base, kRelaxedLoad);
           if (!map_word.IsForwardingAddress()) {
             // There may be objects on the marking deque that do not exist
             // anymore, e.g. left trimmed objects or objects from the root set
@@ -496,10 +493,10 @@ void IncrementalMarking::UpdateMarkingWorklistAfterScavenge() {
             return true;
           }
           DCHECK_IMPLIES(marking_state()->IsWhite(obj),
-                         obj.IsFreeSpaceOrFiller());
+                         obj.IsFreeSpaceOrFiller(cage_base));
           // Skip one word filler objects that appear on the
           // stack when we perform in place array shift.
-          if (obj.map() != filler_map) {
+          if (obj.map(cage_base) != filler_map) {
             *out = obj;
             return true;
           }
@@ -507,6 +504,7 @@ void IncrementalMarking::UpdateMarkingWorklistAfterScavenge() {
         }
       });
 
+  collector_->local_weak_objects()->Publish();
   weak_objects_->UpdateAfterScavenge();
 }
 
@@ -645,7 +643,7 @@ void IncrementalMarking::FinalizeMarking(CompletionAction action) {
         "[IncrementalMarking] requesting finalization of incremental "
         "marking.\n");
   }
-  request_type_ = FINALIZATION;
+  request_type_ = GCRequestType::FINALIZATION;
   if (action == GC_VIA_STACK_GUARD) {
     heap_->isolate()->stack_guard()->RequestGC();
   }
@@ -715,7 +713,7 @@ void IncrementalMarking::MarkingComplete(CompletionAction action) {
     heap()->isolate()->PrintWithTimestamp(
         "[IncrementalMarking] Complete (normal).\n");
   }
-  request_type_ = COMPLETE_MARKING;
+  request_type_ = GCRequestType::COMPLETE_MARKING;
   if (action == GC_VIA_STACK_GUARD) {
     heap_->isolate()->stack_guard()->RequestGC();
   }
@@ -784,7 +782,7 @@ StepResult CombineStepResults(StepResult a, StepResult b) {
 StepResult IncrementalMarking::AdvanceWithDeadline(
     double deadline_in_ms, CompletionAction completion_action,
     StepOrigin step_origin) {
-  HistogramTimerScope incremental_marking_scope(
+  NestedTimedHistogramScope incremental_marking_scope(
       heap_->isolate()->counters()->gc_incremental_marking());
   TRACE_EVENT1("v8", "V8.GCIncrementalMarking", "epoch", heap_->epoch_full());
   TRACE_GC_EPOCH(heap_->tracer(), GCTracer::Scope::MC_INCREMENTAL,
@@ -889,7 +887,7 @@ void IncrementalMarking::AdvanceOnAllocation() {
       state_ != MARKING || heap_->always_allocate()) {
     return;
   }
-  HistogramTimerScope incremental_marking_scope(
+  NestedTimedHistogramScope incremental_marking_scope(
       heap_->isolate()->counters()->gc_incremental_marking());
   TRACE_EVENT0("v8", "V8.GCIncrementalMarking");
   TRACE_GC_EPOCH(heap_->tracer(), GCTracer::Scope::MC_INCREMENTAL,
@@ -944,7 +942,8 @@ StepResult IncrementalMarking::Step(double max_step_size_in_ms,
     // This ignores that case where the embedder finds new V8-side objects. The
     // assumption is that large graphs are well connected and can mostly be
     // processed on their own. For small graphs, helping is not necessary.
-    v8_bytes_processed = collector_->ProcessMarkingWorklist(bytes_to_process);
+    std::tie(v8_bytes_processed, std::ignore) =
+        collector_->ProcessMarkingWorklist(bytes_to_process);
     StepResult v8_result = local_marking_worklists()->IsEmpty()
                                ? StepResult::kNoImmediateWork
                                : StepResult::kMoreWorkRemaining;

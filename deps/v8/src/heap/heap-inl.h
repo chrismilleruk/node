@@ -30,6 +30,7 @@
 #include "src/heap/paged-spaces-inl.h"
 #include "src/heap/read-only-heap.h"
 #include "src/heap/read-only-spaces.h"
+#include "src/heap/safepoint.h"
 #include "src/heap/spaces-inl.h"
 #include "src/heap/third-party/heap-api.h"
 #include "src/objects/allocation-site-inl.h"
@@ -43,8 +44,10 @@
 #include "src/objects/scope-info.h"
 #include "src/objects/slots-inl.h"
 #include "src/objects/struct-inl.h"
+#include "src/objects/visitors-inl.h"
 #include "src/profiler/heap-profiler.h"
 #include "src/strings/string-hasher.h"
+#include "src/utils/ostreams.h"
 #include "src/zone/zone-list-inl.h"
 
 namespace v8 {
@@ -84,23 +87,32 @@ Address AllocationResult::ToAddress() {
 }
 
 // static
-BytecodeFlushMode Heap::GetBytecodeFlushMode(Isolate* isolate) {
+base::EnumSet<CodeFlushMode> Heap::GetCodeFlushMode(Isolate* isolate) {
   if (isolate->disable_bytecode_flushing()) {
-    return BytecodeFlushMode::kDoNotFlushBytecode;
+    return base::EnumSet<CodeFlushMode>();
   }
-  if (FLAG_stress_flush_bytecode) {
-    return BytecodeFlushMode::kStressFlushBytecode;
-  } else if (FLAG_flush_bytecode) {
-    return BytecodeFlushMode::kFlushBytecode;
+
+  base::EnumSet<CodeFlushMode> code_flush_mode;
+  if (FLAG_flush_bytecode) {
+    code_flush_mode.Add(CodeFlushMode::kFlushBytecode);
   }
-  return BytecodeFlushMode::kDoNotFlushBytecode;
+
+  if (FLAG_flush_baseline_code) {
+    code_flush_mode.Add(CodeFlushMode::kFlushBaselineCode);
+  }
+
+  if (FLAG_stress_flush_code) {
+    // This is to check tests accidentally don't miss out on adding either flush
+    // bytecode or flush code along with stress flush code. stress_flush_code
+    // doesn't do anything if either one of them isn't enabled.
+    DCHECK(FLAG_fuzzing || FLAG_flush_baseline_code || FLAG_flush_bytecode);
+    code_flush_mode.Add(CodeFlushMode::kStressFlushCode);
+  }
+
+  return code_flush_mode;
 }
 
-Isolate* Heap::isolate() {
-  return reinterpret_cast<Isolate*>(
-      reinterpret_cast<intptr_t>(this) -
-      reinterpret_cast<size_t>(reinterpret_cast<Isolate*>(16)->heap()) + 16);
-}
+Isolate* Heap::isolate() { return Isolate::FromHeap(this); }
 
 int64_t Heap::external_memory() { return external_memory_.total(); }
 
@@ -195,7 +207,7 @@ AllocationResult Heap::AllocateRaw(int size_in_bytes, AllocationType type,
   DCHECK(AllowHandleAllocation::IsAllowed());
   DCHECK(AllowHeapAllocation::IsAllowed());
   DCHECK_IMPLIES(type == AllocationType::kCode || type == AllocationType::kMap,
-                 alignment == AllocationAlignment::kWordAligned);
+                 alignment == AllocationAlignment::kTaggedAligned);
   DCHECK_EQ(gc_state(), NOT_IN_GC);
 #ifdef V8_ENABLE_ALLOCATION_TIMEOUT
   if (FLAG_random_gc_interval > 0 || FLAG_gc_interval >= 0) {
@@ -309,13 +321,13 @@ HeapObject Heap::AllocateRawWith(int size, AllocationType allocation,
   DCHECK_EQ(gc_state(), NOT_IN_GC);
   Heap* heap = isolate()->heap();
   if (allocation == AllocationType::kYoung &&
-      alignment == AllocationAlignment::kWordAligned &&
-      size <= MaxRegularHeapObjectSize(allocation) && !FLAG_single_generation) {
+      alignment == AllocationAlignment::kTaggedAligned &&
+      size <= MaxRegularHeapObjectSize(allocation) &&
+      V8_LIKELY(!FLAG_single_generation && FLAG_inline_new &&
+                FLAG_gc_interval == -1)) {
     Address* top = heap->NewSpaceAllocationTopAddress();
     Address* limit = heap->NewSpaceAllocationLimitAddress();
-    if ((*limit - *top >= static_cast<unsigned>(size)) &&
-        V8_LIKELY(!FLAG_single_generation && FLAG_inline_new &&
-                  FLAG_gc_interval == 0)) {
+    if (*limit - *top >= static_cast<unsigned>(size)) {
       DCHECK(IsAligned(size, kTaggedSize));
       HeapObject obj = HeapObject::FromAddress(*top);
       *top += size;
@@ -335,14 +347,11 @@ HeapObject Heap::AllocateRawWith(int size, AllocationType allocation,
   UNREACHABLE();
 }
 
-Address Heap::DeserializerAllocate(AllocationType type, int size_in_bytes) {
-  if (V8_ENABLE_THIRD_PARTY_HEAP_BOOL) {
-    AllocationResult allocation = tp_heap_->Allocate(
-        size_in_bytes, type, AllocationAlignment::kDoubleAligned);
-    return allocation.ToObjectChecked().ptr();
-  } else {
-    UNIMPLEMENTED();  // unimplemented
-  }
+Address Heap::AllocateRawOrFail(int size, AllocationType allocation,
+                                AllocationOrigin origin,
+                                AllocationAlignment alignment) {
+  return AllocateRawWith<kRetryOrFail>(size, allocation, origin, alignment)
+      .address();
 }
 
 void Heap::OnAllocationEvent(HeapObject object, int size_in_bytes) {
@@ -492,13 +501,6 @@ bool Heap::InOldSpace(Object object) {
   return old_space_->Contains(object);
 }
 
-bool Heap::InCodeSpace(HeapObject object) {
-  if (V8_ENABLE_THIRD_PARTY_HEAP_BOOL) {
-    return third_party_heap::Heap::InCodeSpace(object.ptr());
-  }
-  return code_space_->Contains(object) || code_lo_space_->Contains(object);
-}
-
 // static
 Heap* Heap::FromWritableHeapObject(HeapObject obj) {
   if (V8_ENABLE_THIRD_PARTY_HEAP_BOOL) {
@@ -613,7 +615,7 @@ void Heap::UpdateAllocationSite(Map map, HeapObject object,
   (*pretenuring_feedback)[AllocationSite::unchecked_cast(Object(key))]++;
 }
 
-bool Heap::IsPendingAllocation(HeapObject object) {
+bool Heap::IsPendingAllocationInternal(HeapObject object) {
   DCHECK(deserialization_complete());
 
   if (V8_ENABLE_THIRD_PARTY_HEAP_BOOL) {
@@ -663,6 +665,15 @@ bool Heap::IsPendingAllocation(HeapObject object) {
   }
 
   UNREACHABLE();
+}
+
+bool Heap::IsPendingAllocation(HeapObject object) {
+  bool result = IsPendingAllocationInternal(object);
+  if (FLAG_trace_pending_allocations && result) {
+    StdoutStream{} << "Pending allocation: " << std::hex << "0x" << object.ptr()
+                   << "\n";
+  }
+  return result;
 }
 
 bool Heap::IsPendingAllocation(Object object) {
@@ -756,6 +767,9 @@ bool Heap::HasDirtyJSFinalizationRegistries() {
   return !dirty_js_finalization_registries_list().IsUndefined(isolate());
 }
 
+VerifyPointersVisitor::VerifyPointersVisitor(Heap* heap)
+    : ObjectVisitorWithCageBases(heap), heap_(heap) {}
+
 AlwaysAllocateScope::AlwaysAllocateScope(Heap* heap) : heap_(heap) {
   heap_->always_allocate_scope_count_++;
 }
@@ -764,19 +778,30 @@ AlwaysAllocateScope::~AlwaysAllocateScope() {
   heap_->always_allocate_scope_count_--;
 }
 
+OptionalAlwaysAllocateScope::OptionalAlwaysAllocateScope(Heap* heap)
+    : heap_(heap) {
+  if (heap_) heap_->always_allocate_scope_count_++;
+}
+
+OptionalAlwaysAllocateScope::~OptionalAlwaysAllocateScope() {
+  if (heap_) heap_->always_allocate_scope_count_--;
+}
+
 AlwaysAllocateScopeForTesting::AlwaysAllocateScopeForTesting(Heap* heap)
     : scope_(heap) {}
 
 CodeSpaceMemoryModificationScope::CodeSpaceMemoryModificationScope(Heap* heap)
     : heap_(heap) {
+  DCHECK_EQ(ThreadId::Current(), heap_->isolate()->thread_id());
+  heap_->safepoint()->AssertActive();
   if (heap_->write_protect_code_memory()) {
     heap_->increment_code_space_memory_modification_scope_depth();
-    heap_->code_space()->SetReadAndWritable();
+    heap_->code_space()->SetCodeModificationPermissions();
     LargePage* page = heap_->code_lo_space()->first_page();
     while (page != nullptr) {
       DCHECK(page->IsFlagSet(MemoryChunk::IS_EXECUTABLE));
-      CHECK(heap_->memory_allocator()->IsMemoryChunkExecutable(page));
-      page->SetReadAndWritable();
+      DCHECK(heap_->memory_allocator()->IsMemoryChunkExecutable(page));
+      page->SetCodeModificationPermissions();
       page = page->next_page();
     }
   }
@@ -789,7 +814,7 @@ CodeSpaceMemoryModificationScope::~CodeSpaceMemoryModificationScope() {
     LargePage* page = heap_->code_lo_space()->first_page();
     while (page != nullptr) {
       DCHECK(page->IsFlagSet(MemoryChunk::IS_EXECUTABLE));
-      CHECK(heap_->memory_allocator()->IsMemoryChunkExecutable(page));
+      DCHECK(heap_->memory_allocator()->IsMemoryChunkExecutable(page));
       page->SetDefaultCodePermissions();
       page = page->next_page();
     }
@@ -799,21 +824,17 @@ CodeSpaceMemoryModificationScope::~CodeSpaceMemoryModificationScope() {
 CodePageCollectionMemoryModificationScope::
     CodePageCollectionMemoryModificationScope(Heap* heap)
     : heap_(heap) {
-  if (heap_->write_protect_code_memory() &&
-      !heap_->code_space_memory_modification_scope_depth()) {
-    heap_->EnableUnprotectedMemoryChunksRegistry();
+  if (heap_->write_protect_code_memory()) {
     heap_->IncrementCodePageCollectionMemoryModificationScopeDepth();
   }
 }
 
 CodePageCollectionMemoryModificationScope::
     ~CodePageCollectionMemoryModificationScope() {
-  if (heap_->write_protect_code_memory() &&
-      !heap_->code_space_memory_modification_scope_depth()) {
+  if (heap_->write_protect_code_memory()) {
     heap_->DecrementCodePageCollectionMemoryModificationScopeDepth();
     if (heap_->code_page_collection_memory_modification_scope_depth() == 0) {
       heap_->ProtectUnprotectedMemoryChunks();
-      heap_->DisableUnprotectedMemoryChunksRegistry();
     }
   }
 }
@@ -834,7 +855,7 @@ CodePageMemoryModificationScope::CodePageMemoryModificationScope(
   if (scope_active_) {
     DCHECK(chunk_->owner()->identity() == CODE_SPACE ||
            (chunk_->owner()->identity() == CODE_LO_SPACE));
-    MemoryChunk::cast(chunk_)->SetReadAndWritable();
+    MemoryChunk::cast(chunk_)->SetCodeModificationPermissions();
   }
 }
 
@@ -842,6 +863,16 @@ CodePageMemoryModificationScope::~CodePageMemoryModificationScope() {
   if (scope_active_) {
     MemoryChunk::cast(chunk_)->SetDefaultCodePermissions();
   }
+}
+
+IgnoreLocalGCRequests::IgnoreLocalGCRequests(Heap* heap) : heap_(heap) {
+  DCHECK_EQ(ThreadId::Current(), heap_->isolate()->thread_id());
+  heap_->ignore_local_gc_requests_depth_++;
+}
+
+IgnoreLocalGCRequests::~IgnoreLocalGCRequests() {
+  DCHECK_GT(heap_->ignore_local_gc_requests_depth_, 0);
+  heap_->ignore_local_gc_requests_depth_--;
 }
 
 }  // namespace internal

@@ -35,7 +35,7 @@ namespace internal {
 
 #include "torque-generated/src/wasm/wasm-objects-tq-inl.inc"
 
-TQ_OBJECT_CONSTRUCTORS_IMPL(WasmExceptionObject)
+TQ_OBJECT_CONSTRUCTORS_IMPL(WasmTagObject)
 TQ_OBJECT_CONSTRUCTORS_IMPL(WasmExceptionTag)
 TQ_OBJECT_CONSTRUCTORS_IMPL(WasmCapiFunctionData)
 TQ_OBJECT_CONSTRUCTORS_IMPL(WasmExportedFunctionData)
@@ -47,9 +47,13 @@ TQ_OBJECT_CONSTRUCTORS_IMPL(WasmModuleObject)
 TQ_OBJECT_CONSTRUCTORS_IMPL(WasmTableObject)
 TQ_OBJECT_CONSTRUCTORS_IMPL(AsmWasmData)
 TQ_OBJECT_CONSTRUCTORS_IMPL(WasmFunctionData)
+TQ_OBJECT_CONSTRUCTORS_IMPL(WasmApiFunctionRef)
+TQ_OBJECT_CONSTRUCTORS_IMPL(WasmInternalFunction)
 TQ_OBJECT_CONSTRUCTORS_IMPL(WasmTypeInfo)
 TQ_OBJECT_CONSTRUCTORS_IMPL(WasmStruct)
 TQ_OBJECT_CONSTRUCTORS_IMPL(WasmArray)
+TQ_OBJECT_CONSTRUCTORS_IMPL(WasmContinuationObject)
+TQ_OBJECT_CONSTRUCTORS_IMPL(WasmSuspenderObject)
 
 CAST_ACCESSOR(WasmInstanceObject)
 
@@ -174,25 +178,31 @@ void WasmGlobalObject::SetExternRef(Handle<Object> value) {
 
 bool WasmGlobalObject::SetFuncRef(Isolate* isolate, Handle<Object> value) {
   DCHECK_EQ(type(), wasm::kWasmFuncRef);
-  if (!value->IsNull(isolate) &&
-      !WasmExternalFunction::IsWasmExternalFunction(*value) &&
-      !WasmCapiFunction::IsWasmCapiFunction(*value)) {
-    return false;
+  if (value->IsNull() ||
+      WasmInternalFunction::FromExternal(value, isolate).ToHandle(&value)) {
+    tagged_buffer().set(offset(), *value);
+    return true;
   }
-  tagged_buffer().set(offset(), *value);
-  return true;
+  return false;
 }
 
 // WasmInstanceObject
 PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_start, byte*, kMemoryStartOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_size, size_t, kMemorySizeOffset)
-PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_mask, size_t, kMemoryMaskOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, isolate_root, Address,
                     kIsolateRootOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, stack_limit_address, Address,
                     kStackLimitAddressOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, real_stack_limit_address, Address,
                     kRealStackLimitAddressOffset)
+PRIMITIVE_ACCESSORS(WasmInstanceObject, new_allocation_limit_address, Address*,
+                    kNewAllocationLimitAddressOffset)
+PRIMITIVE_ACCESSORS(WasmInstanceObject, new_allocation_top_address, Address*,
+                    kNewAllocationTopAddressOffset)
+PRIMITIVE_ACCESSORS(WasmInstanceObject, old_allocation_limit_address, Address*,
+                    kOldAllocationLimitAddressOffset)
+PRIMITIVE_ACCESSORS(WasmInstanceObject, old_allocation_top_address, Address*,
+                    kOldAllocationTopAddressOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, imported_function_targets, Address*,
                     kImportedFunctionTargetsOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, globals_start, byte*,
@@ -215,8 +225,8 @@ PRIMITIVE_ACCESSORS(WasmInstanceObject, dropped_elem_segments, byte*,
                     kDroppedElemSegmentsOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, hook_on_function_call_address, Address,
                     kHookOnFunctionCallAddressOffset)
-PRIMITIVE_ACCESSORS(WasmInstanceObject, num_liftoff_function_calls_array,
-                    uint32_t*, kNumLiftoffFunctionCallsArrayOffset)
+PRIMITIVE_ACCESSORS(WasmInstanceObject, tiering_budget_array, uint32_t*,
+                    kTieringBudgetArrayOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, break_on_entry, uint8_t,
                     kBreakOnEntryOffset)
 
@@ -241,12 +251,13 @@ OPTIONAL_ACCESSORS(WasmInstanceObject, indirect_function_table_refs, FixedArray,
                    kIndirectFunctionTableRefsOffset)
 OPTIONAL_ACCESSORS(WasmInstanceObject, managed_native_allocations, Foreign,
                    kManagedNativeAllocationsOffset)
-OPTIONAL_ACCESSORS(WasmInstanceObject, exceptions_table, FixedArray,
-                   kExceptionsTableOffset)
-OPTIONAL_ACCESSORS(WasmInstanceObject, wasm_external_functions, FixedArray,
-                   kWasmExternalFunctionsOffset)
+OPTIONAL_ACCESSORS(WasmInstanceObject, tags_table, FixedArray, kTagsTableOffset)
+OPTIONAL_ACCESSORS(WasmInstanceObject, wasm_internal_functions, FixedArray,
+                   kWasmInternalFunctionsOffset)
 ACCESSORS(WasmInstanceObject, managed_object_maps, FixedArray,
           kManagedObjectMapsOffset)
+ACCESSORS(WasmInstanceObject, feedback_vectors, FixedArray,
+          kFeedbackVectorsOffset)
 
 void WasmInstanceObject::clear_padding() {
   if (FIELD_SIZE(kOptionalPaddingOffset) != 0) {
@@ -254,32 +265,6 @@ void WasmInstanceObject::clear_padding() {
     memset(reinterpret_cast<void*>(address() + kOptionalPaddingOffset), 0,
            FIELD_SIZE(kOptionalPaddingOffset));
   }
-}
-
-IndirectFunctionTableEntry::IndirectFunctionTableEntry(
-    Handle<WasmInstanceObject> instance, int table_index, int entry_index)
-    : instance_(table_index == 0 ? instance
-                                 : Handle<WasmInstanceObject>::null()),
-      table_(table_index != 0
-                 ? handle(WasmIndirectFunctionTable::cast(
-                              instance->indirect_function_tables().get(
-                                  table_index)),
-                          instance->GetIsolate())
-                 : Handle<WasmIndirectFunctionTable>::null()),
-      index_(entry_index) {
-  DCHECK_GE(entry_index, 0);
-  DCHECK_LT(entry_index, table_index == 0
-                             ? instance->indirect_function_table_size()
-                             : table_->size());
-}
-
-IndirectFunctionTableEntry::IndirectFunctionTableEntry(
-    Handle<WasmIndirectFunctionTable> table, int entry_index)
-    : instance_(Handle<WasmInstanceObject>::null()),
-      table_(table),
-      index_(entry_index) {
-  DCHECK_GE(entry_index, 0);
-  DCHECK_LT(entry_index, table_->size());
 }
 
 ImportedFunctionEntry::ImportedFunctionEntry(
@@ -290,7 +275,7 @@ ImportedFunctionEntry::ImportedFunctionEntry(
 }
 
 // WasmExceptionPackage
-OBJECT_CONSTRUCTORS_IMPL(WasmExceptionPackage, JSReceiver)
+OBJECT_CONSTRUCTORS_IMPL(WasmExceptionPackage, JSObject)
 CAST_ACCESSOR(WasmExceptionPackage)
 
 // WasmExportedFunction
@@ -300,7 +285,7 @@ WasmExportedFunction::WasmExportedFunction(Address ptr) : JSFunction(ptr) {
 CAST_ACCESSOR(WasmExportedFunction)
 
 // WasmFunctionData
-ACCESSORS(WasmFunctionData, ref, Object, kRefOffset)
+ACCESSORS(WasmFunctionData, internal, WasmInternalFunction, kInternalOffset)
 
 DEF_GETTER(WasmFunctionData, wrapper_code, Code) {
   return FromCodeT(TorqueGeneratedClass::wrapper_code(cage_base));
@@ -321,15 +306,15 @@ CAST_ACCESSOR(WasmJSFunction)
 
 // WasmJSFunctionData
 TQ_OBJECT_CONSTRUCTORS_IMPL(WasmJSFunctionData)
-ACCESSORS(WasmJSFunctionData, raw_wasm_to_js_wrapper_code, CodeT,
-          kWasmToJsWrapperCodeOffset)
 
-DEF_GETTER(WasmJSFunctionData, wasm_to_js_wrapper_code, Code) {
-  return FromCodeT(raw_wasm_to_js_wrapper_code(cage_base));
+// WasmInternalFunction
+ACCESSORS(WasmInternalFunction, raw_code, CodeT, kCodeOffset)
+
+DEF_GETTER(WasmInternalFunction, code, Code) {
+  return FromCodeT(raw_code(cage_base));
 }
-void WasmJSFunctionData::set_wasm_to_js_wrapper_code(Code code,
-                                                     WriteBarrierMode mode) {
-  set_raw_wasm_to_js_wrapper_code(ToCodeT(code), mode);
+void WasmInternalFunction::set_code(Code code, WriteBarrierMode mode) {
+  set_raw_code(ToCodeT(code), mode);
 }
 
 // WasmCapiFunction
@@ -536,10 +521,10 @@ wasm::StructType* WasmStruct::type(Map map) {
 wasm::StructType* WasmStruct::GcSafeType(Map map) {
   DCHECK_EQ(WASM_STRUCT_TYPE, map.instance_type());
   HeapObject raw = HeapObject::cast(map.constructor_or_back_pointer());
-  MapWord map_word = raw.map_word(kRelaxedLoad);
-  HeapObject forwarded =
-      map_word.IsForwardingAddress() ? map_word.ToForwardingAddress() : raw;
-  Foreign foreign = Foreign::cast(forwarded);
+  // The {Foreign} might be in the middle of being moved, which is why we
+  // can't read its map for a checked cast. But we can rely on its payload
+  // being intact in the old location.
+  Foreign foreign = Foreign::unchecked_cast(raw);
   return reinterpret_cast<wasm::StructType*>(foreign.foreign_address());
 }
 
@@ -552,10 +537,25 @@ int WasmStruct::Size(const wasm::StructType* type) {
                   Heap::kMinObjectSizeInTaggedWords * kTaggedSize);
 }
 
-int WasmStruct::GcSafeSize(Map map) {
-  wasm::StructType* type = GcSafeType(map);
-  return Size(type);
+// static
+void WasmStruct::EncodeInstanceSizeInMap(int instance_size, Map map) {
+  // WasmStructs can be bigger than the {map.instance_size_in_words} field
+  // can describe; yet we have to store the instance size somewhere on the
+  // map so that the GC can read it without relying on any other objects
+  // still being around. To solve this problem, we store the instance size
+  // in two other fields that are otherwise unused for WasmStructs.
+  STATIC_ASSERT(0xFFFF - kHeaderSize >
+                wasm::kMaxValueTypeSize * wasm::kV8MaxWasmStructFields);
+  map.SetWasmByte1(instance_size & 0xFF);
+  map.SetWasmByte2(instance_size >> 8);
 }
+
+// static
+int WasmStruct::DecodeInstanceSizeFromMap(Map map) {
+  return (map.WasmByte2() << 8) | map.WasmByte1();
+}
+
+int WasmStruct::GcSafeSize(Map map) { return DecodeInstanceSizeFromMap(map); }
 
 wasm::StructType* WasmStruct::type() const { return type(map()); }
 
@@ -597,23 +597,34 @@ wasm::ArrayType* WasmArray::type(Map map) {
 wasm::ArrayType* WasmArray::GcSafeType(Map map) {
   DCHECK_EQ(WASM_ARRAY_TYPE, map.instance_type());
   HeapObject raw = HeapObject::cast(map.constructor_or_back_pointer());
-  MapWord map_word = raw.map_word(kRelaxedLoad);
-  HeapObject forwarded =
-      map_word.IsForwardingAddress() ? map_word.ToForwardingAddress() : raw;
-  Foreign foreign = Foreign::cast(forwarded);
+  // The {Foreign} might be in the middle of being moved, which is why we
+  // can't read its map for a checked cast. But we can rely on its payload
+  // being intact in the old location.
+  Foreign foreign = Foreign::unchecked_cast(raw);
   return reinterpret_cast<wasm::ArrayType*>(foreign.foreign_address());
 }
 
 wasm::ArrayType* WasmArray::type() const { return type(map()); }
 
 int WasmArray::SizeFor(Map map, int length) {
-  int element_size = type(map)->element_type().element_size_bytes();
+  int element_size = DecodeElementSizeFromMap(map);
   return kHeaderSize + RoundUp(element_size * length, kTaggedSize);
 }
 
-int WasmArray::GcSafeSizeFor(Map map, int length) {
-  int element_size = GcSafeType(map)->element_type().element_size_bytes();
-  return kHeaderSize + RoundUp(element_size * length, kTaggedSize);
+uint32_t WasmArray::element_offset(uint32_t index) {
+  DCHECK_LE(index, length());
+  return WasmArray::kHeaderSize +
+         index * type()->element_type().element_size_bytes();
+}
+
+Address WasmArray::ElementAddress(uint32_t index) {
+  return ptr() + element_offset(index) - kHeapObjectTag;
+}
+
+ObjectSlot WasmArray::ElementSlot(uint32_t index) {
+  DCHECK_LE(index, length());
+  DCHECK(type()->element_type().is_reference());
+  return RawField(kHeaderSize + kTaggedSize * index);
 }
 
 // static
@@ -623,10 +634,17 @@ Handle<Object> WasmArray::GetElement(Isolate* isolate, Handle<WasmArray> array,
     return isolate->factory()->undefined_value();
   }
   wasm::ValueType element_type = array->type()->element_type();
-  uint32_t offset =
-      WasmArray::kHeaderSize + index * element_type.element_size_bytes();
-  return ReadValueAt(isolate, array, element_type, offset);
+  return ReadValueAt(isolate, array, element_type,
+                     array->element_offset(index));
 }
+
+// static
+void WasmArray::EncodeElementSizeInMap(int element_size, Map map) {
+  map.SetWasmByte1(element_size);
+}
+
+// static
+int WasmArray::DecodeElementSizeFromMap(Map map) { return map.WasmByte1(); }
 
 void WasmTypeInfo::clear_foreign_address(Isolate* isolate) {
 #ifdef V8_HEAP_SANDBOX

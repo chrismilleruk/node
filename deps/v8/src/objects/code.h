@@ -28,9 +28,15 @@ class BytecodeArray;
 class CodeDataContainer;
 class CodeDesc;
 
+class LocalFactory;
+template <typename Impl>
+class FactoryBase;
+
 namespace interpreter {
 class Register;
 }  // namespace interpreter
+
+#include "torque-generated/src/objects/code-tq.inc"
 
 // CodeDataContainer is a container for all mutable fields associated with its
 // referencing {Code} object. Since {Code} objects reside on write-protected
@@ -41,7 +47,7 @@ class CodeDataContainer : public HeapObject {
  public:
   NEVER_READ_ONLY_SPACE
   DECL_ACCESSORS(next_code_link, Object)
-  DECL_INT_ACCESSORS(kind_specific_flags)
+  DECL_RELAXED_INT32_ACCESSORS(kind_specific_flags)
 
   // Clear uninitialized padding space. This ensures that the snapshot content
   // is deterministic.
@@ -51,6 +57,17 @@ class CodeDataContainer : public HeapObject {
   // Available only when V8_EXTERNAL_CODE_SPACE is defined.
   DECL_GETTER(code, Code)
   DECL_RELAXED_GETTER(code, Code)
+
+  // When V8_EXTERNAL_CODE_SPACE is enabled, Code objects are allocated in
+  // a separate pointer compression cage instead of the cage where all the
+  // other objects are allocated.
+  // This field contains code cage base value which is used for decompressing
+  // the reference to respective Code. Basically, |code_cage_base| and |code|
+  // fields together form a full pointer. The reason why they are split is that
+  // the code field must also support atomic access and the word alignment of
+  // the full value is not guaranteed.
+  inline PtrComprCageBase code_cage_base() const;
+  inline void set_code_cage_base(Address code_cage_base);
 
   // Cached value of code().InstructionStart().
   // Available only when V8_EXTERNAL_CODE_SPACE is defined.
@@ -68,6 +85,24 @@ class CodeDataContainer : public HeapObject {
   // Alias for code_entry_point to make it API compatible with Code.
   inline Address InstructionStart() const;
 
+#ifdef V8_EXTERNAL_CODE_SPACE
+  //
+  // A collection of getters and predicates that forward queries to associated
+  // Code object.
+  //
+
+  inline CodeKind kind() const;
+  inline Builtin builtin_id() const;
+  inline bool is_builtin() const;
+  inline bool is_interpreter_trampoline_builtin() const;
+
+  DECL_GETTER(deoptimization_data, FixedArray)
+  DECL_GETTER(bytecode_or_interpreter_data, HeapObject)
+  DECL_GETTER(source_position_table, ByteArray)
+  DECL_GETTER(bytecode_offset_table, ByteArray)
+
+#endif  // V8_EXTERNAL_CODE_SPACE
+
   DECL_CAST(CodeDataContainer)
 
   // Dispatched behavior.
@@ -77,12 +112,16 @@ class CodeDataContainer : public HeapObject {
 // Layout description.
 #define CODE_DATA_FIELDS(V)                                     \
   /* Strong pointer fields. */                                  \
-  V(kCodeOffset, V8_EXTERNAL_CODE_SPACE_BOOL ? kTaggedSize : 0) \
   V(kPointerFieldsStrongEndOffset, 0)                           \
   /* Weak pointer fields. */                                    \
   V(kNextCodeLinkOffset, kTaggedSize)                           \
   V(kPointerFieldsWeakEndOffset, 0)                             \
+  /* Strong Code pointer fields. */                             \
+  V(kCodeOffset, V8_EXTERNAL_CODE_SPACE_BOOL ? kTaggedSize : 0) \
+  V(kCodePointerFieldsStrongEndOffset, 0)                       \
   /* Raw data fields. */                                        \
+  V(kCodeCageBaseUpper32BitsOffset,                             \
+    V8_EXTERNAL_CODE_SPACE_BOOL ? kTaggedSize : 0)              \
   V(kCodeEntryPointOffset,                                      \
     V8_EXTERNAL_CODE_SPACE_BOOL ? kExternalPointerSize : 0)     \
   V(kKindSpecificFlagsOffset, kInt32Size)                       \
@@ -97,10 +136,12 @@ class CodeDataContainer : public HeapObject {
 
  private:
   DECL_ACCESSORS(raw_code, Object)
-  DECL_RELAXED_ACCESSORS(raw_code, Object)
+  DECL_RELAXED_GETTER(raw_code, Object)
   inline void set_code_entry_point(Isolate* isolate, Address value);
 
   friend Factory;
+  friend FactoryBase<Factory>;
+  friend FactoryBase<LocalFactory>;
 
   OBJECT_CONSTRUCTORS(CodeDataContainer, HeapObject);
 };
@@ -269,14 +310,16 @@ class Code : public HeapObject {
 
   // [relocation_info]: Code relocation information
   DECL_ACCESSORS(relocation_info, ByteArray)
-  DECL_RELEASE_ACQUIRE_ACCESSORS(relocation_info, ByteArray)
-  DECL_ACCESSORS(relocation_info_or_undefined, HeapObject)
 
   // This function should be called only from GC.
   void ClearEmbeddedObjects(Heap* heap);
 
-  // [deoptimization_data]: Array containing data for deopt.
+  // [deoptimization_data]: Array containing data for deopt for non-baseline
+  // code.
   DECL_ACCESSORS(deoptimization_data, FixedArray)
+  // [bytecode_or_interpreter_data]: BytecodeArray or InterpreterData for
+  // baseline code.
+  DECL_ACCESSORS(bytecode_or_interpreter_data, HeapObject)
 
   // [source_position_table]: ByteArray for the source positions table for
   // non-baseline code.
@@ -299,7 +342,6 @@ class Code : public HeapObject {
 
   // Unchecked accessors to be used during GC.
   inline ByteArray unchecked_relocation_info() const;
-  inline HeapObject synchronized_unchecked_relocation_info_or_undefined() const;
 
   inline int relocation_size() const;
 
@@ -400,6 +442,14 @@ class Code : public HeapObject {
   // out the to-be-overwritten header data for reproducible snapshots.
   inline void WipeOutHeader();
 
+  // When V8_EXTERNAL_CODE_SPACE is enabled, Code objects are allocated in
+  // a separate pointer compression cage instead of the cage where all the
+  // other objects are allocated.
+  // This field contains cage base value which is used for decompressing
+  // the references to non-Code objects (map, deoptimization_data, etc.).
+  inline PtrComprCageBase main_cage_base() const;
+  inline void set_main_cage_base(Address cage_base);
+
   // Clear uninitialized padding space. This ensures that the snapshot content
   // is deterministic. Depending on the V8 build mode there could be no padding.
   inline void clear_padding();
@@ -438,10 +488,6 @@ class Code : public HeapObject {
   void CopyFromNoFlush(ByteArray reloc_info, Heap* heap, const CodeDesc& desc);
   void RelocateFromDesc(ByteArray reloc_info, Heap* heap, const CodeDesc& desc);
 
-#ifdef VERIFY_HEAP
-  void VerifyRelocInfo(Isolate* isolate, ByteArray reloc_info);
-#endif
-
   // Copy the RelocInfo portion of |desc| to |dest|. The ByteArray must be
   // exactly the same size as the RelocInfo in |desc|.
   static inline void CopyRelocInfoToByteArray(ByteArray dest,
@@ -473,11 +519,14 @@ class Code : public HeapObject {
     return RoundUp(kHeaderSize + body_size, kCodeAlignment);
   }
 
+  inline int CodeSize() const;
+
+  // Hides HeapObject::Size(...) and redirects queries to CodeSize().
+  DECL_GETTER(Size, int)
+
   DECL_CAST(Code)
 
   // Dispatched behavior.
-  inline int CodeSize() const;
-
   DECL_PRINTER(Code)
   DECL_VERIFIER(Code)
 
@@ -495,6 +544,8 @@ class Code : public HeapObject {
 
   static inline bool IsWeakObjectInOptimizedCode(HeapObject object);
 
+  static inline bool IsWeakObjectInDeoptimizationLiteralArray(Object object);
+
   // Returns false if this is an embedded builtin Code object that's in
   // read_only_space and hence doesn't have execute permissions.
   inline bool IsExecutable();
@@ -507,13 +558,15 @@ class Code : public HeapObject {
   // Layout description.
 #define CODE_FIELDS(V)                                                        \
   V(kRelocationInfoOffset, kTaggedSize)                                       \
-  V(kDeoptimizationDataOffset, kTaggedSize)                                   \
+  V(kDeoptimizationDataOrInterpreterDataOffset, kTaggedSize)                  \
   V(kPositionTableOffset, kTaggedSize)                                        \
   V(kCodeDataContainerOffset, kTaggedSize)                                    \
   /* Data or code not directly visited by GC directly starts here. */         \
   /* The serializer needs to copy bytes starting from here verbatim. */       \
   /* Objects embedded into code is visited via reloc info. */                 \
   V(kDataStart, 0)                                                            \
+  V(kMainCageBaseUpper32BitsOffset,                                           \
+    V8_EXTERNAL_CODE_SPACE_BOOL ? kTaggedSize : 0)                            \
   V(kInstructionSizeOffset, kIntSize)                                         \
   V(kMetadataSizeOffset, kIntSize)                                            \
   V(kFlagsOffset, kInt32Size)                                                 \
@@ -537,11 +590,15 @@ class Code : public HeapObject {
   // This documents the amount of free space we have in each Code object header
   // due to padding for code alignment.
 #if V8_TARGET_ARCH_ARM64
-  static constexpr int kHeaderPaddingSize = COMPRESS_POINTERS_BOOL ? 12 : 24;
+  static constexpr int kHeaderPaddingSize =
+      V8_EXTERNAL_CODE_SPACE_BOOL ? 8 : (COMPRESS_POINTERS_BOOL ? 12 : 24);
 #elif V8_TARGET_ARCH_MIPS64
   static constexpr int kHeaderPaddingSize = 24;
+#elif V8_TARGET_ARCH_LOONG64
+  static constexpr int kHeaderPaddingSize = 24;
 #elif V8_TARGET_ARCH_X64
-  static constexpr int kHeaderPaddingSize = COMPRESS_POINTERS_BOOL ? 12 : 24;
+  static constexpr int kHeaderPaddingSize =
+      V8_EXTERNAL_CODE_SPACE_BOOL ? 8 : (COMPRESS_POINTERS_BOOL ? 12 : 56);
 #elif V8_TARGET_ARCH_ARM
   static constexpr int kHeaderPaddingSize = 12;
 #elif V8_TARGET_ARCH_IA32
@@ -643,6 +700,10 @@ class Code::OptimizedCodeIterator {
 inline CodeT ToCodeT(Code code);
 inline Code FromCodeT(CodeT code);
 inline Code FromCodeT(CodeT code, RelaxedLoadTag);
+inline Code FromCodeT(CodeT code, AcquireLoadTag);
+inline Code FromCodeT(CodeT code, PtrComprCageBase);
+inline Code FromCodeT(CodeT code, PtrComprCageBase, RelaxedLoadTag);
+inline Code FromCodeT(CodeT code, PtrComprCageBase, AcquireLoadTag);
 inline CodeDataContainer CodeDataContainerFromCodeT(CodeT code);
 
 class AbstractCode : public HeapObject {
@@ -687,7 +748,7 @@ class AbstractCode : public HeapObject {
   inline int SizeIncludingMetadata();
 
   // Returns true if pc is inside this object's instructions.
-  inline bool contains(Address pc);
+  inline bool contains(Isolate* isolate, Address pc);
 
   // Returns the kind of the code.
   inline CodeKind kind();
@@ -706,34 +767,26 @@ class AbstractCode : public HeapObject {
   inline ByteArray SourcePositionTableInternal();
 };
 
-// Dependent code is a singly linked list of weak fixed arrays. Each array
-// contains weak pointers to code objects for one dependent group. The suffix of
-// the array can be filled with the undefined value if the number of codes is
-// less than the length of the array.
+// Dependent code is conceptually the list of {Code, DependencyGroup} tuples
+// associated with an object, where the dependency group is a reason that could
+// lead to a deopt of the corresponding code.
 //
-// +------+-----------------+--------+--------+-----+--------+-----------+-----+
-// | next | count & group 1 | code 1 | code 2 | ... | code n | undefined | ... |
-// +------+-----------------+--------+--------+-----+--------+-----------+-----+
-//    |
-//    V
-// +------+-----------------+--------+--------+-----+--------+-----------+-----+
-// | next | count & group 2 | code 1 | code 2 | ... | code m | undefined | ... |
-// +------+-----------------+--------+--------+-----+--------+-----------+-----+
-//    |
-//    V
-// empty_weak_fixed_array()
+// Implementation details: DependentCode is a weak array list containing
+// entries, where each entry consists of a (weak) Code object and the
+// DependencyGroups bitset as a Smi.
 //
-// The list of weak fixed arrays is ordered by dependency groups.
-
-class DependentCode : public WeakFixedArray {
+// Note the underlying weak array list currently never shrinks physically (the
+// contents may shrink).
+// TODO(jgruber): Consider adding physical shrinking.
+class DependentCode : public WeakArrayList {
  public:
   DECL_CAST(DependentCode)
 
   enum DependencyGroup {
-    // Group of code that embed a transition to this map, and depend on being
-    // deoptimized when the transition is replaced by a new version.
-    kTransitionGroup,
-    // Group of code that omit run-time prototype checks for prototypes
+    // Group of code objects that embed a transition to this map, and depend on
+    // being deoptimized when the transition is replaced by a new version.
+    kTransitionGroup = 1 << 0,
+    // Group of code objects that omit run-time prototype checks for prototypes
     // described by this map. The group is deoptimized whenever the following
     // conditions hold, possibly invalidating the assumptions embedded in the
     // code:
@@ -742,91 +795,85 @@ class DependentCode : public WeakFixedArray {
     // b) A dictionary-mode prototype described by this map changes shape, the
     // const-ness of one of its properties changes, or its [[Prototype]]
     // changes (only the latter causes a transition).
-    kPrototypeCheckGroup,
-    // Group of code that depends on global property values in property cells
-    // not being changed.
-    kPropertyCellChangedGroup,
-    // Group of code that omit run-time checks for field(s) introduced by
-    // this map, i.e. for the field type.
-    kFieldTypeGroup,
-    kFieldConstGroup,
-    kFieldRepresentationGroup,
-    // Group of code that omit run-time type checks for initial maps of
+    kPrototypeCheckGroup = 1 << 1,
+    // Group of code objects that depends on global property values in property
+    // cells not being changed.
+    kPropertyCellChangedGroup = 1 << 2,
+    // Group of code objects that omit run-time checks for field(s) introduced
+    // by this map, i.e. for the field type.
+    kFieldTypeGroup = 1 << 3,
+    kFieldConstGroup = 1 << 4,
+    kFieldRepresentationGroup = 1 << 5,
+    // Group of code objects that omit run-time type checks for initial maps of
     // constructors.
-    kInitialMapChangedGroup,
-    // Group of code that depends on tenuring information in AllocationSites
-    // not being changed.
-    kAllocationSiteTenuringChangedGroup,
-    // Group of code that depends on element transition information in
+    kInitialMapChangedGroup = 1 << 6,
+    // Group of code objects that depends on tenuring information in
     // AllocationSites not being changed.
-    kAllocationSiteTransitionChangedGroup
+    kAllocationSiteTenuringChangedGroup = 1 << 7,
+    // Group of code objects that depends on element transition information in
+    // AllocationSites not being changed.
+    kAllocationSiteTransitionChangedGroup = 1 << 8,
+    // IMPORTANT: The last bit must fit into a Smi, i.e. into 31 bits.
   };
+  using DependencyGroups = base::Flags<DependencyGroup, uint32_t>;
 
-  // Register a dependency of {code} on {object}, of the kind given by {group}.
+  static const char* DependencyGroupName(DependencyGroup group);
+
+  // Register a dependency of {code} on {object}, of the kinds given by
+  // {groups}.
   V8_EXPORT_PRIVATE static void InstallDependency(Isolate* isolate,
                                                   Handle<Code> code,
                                                   Handle<HeapObject> object,
-                                                  DependencyGroup group);
+                                                  DependencyGroups groups);
 
-  void DeoptimizeDependentCodeGroup(DependencyGroup group);
+  void DeoptimizeDependentCodeGroup(Isolate* isolate, DependencyGroups groups);
 
-  bool MarkCodeForDeoptimization(DependencyGroup group);
+  bool MarkCodeForDeoptimization(DependencyGroups deopt_groups);
 
-  // The following low-level accessors are exposed only for tests.
-  inline DependencyGroup group();
-  inline MaybeObject object_at(int i);
-  inline int count();
-  inline DependentCode next_link();
+  V8_EXPORT_PRIVATE static DependentCode empty_dependent_code(
+      const ReadOnlyRoots& roots);
+  static constexpr RootIndex kEmptyDependentCode =
+      RootIndex::kEmptyWeakArrayList;
+
+  // Constants exposed for tests.
+  static constexpr int kSlotsPerEntry = 2;  // {code: weak Code, groups: Smi}.
+  static constexpr int kCodeSlotOffset = 0;
+  static constexpr int kGroupsSlotOffset = 1;
 
  private:
-  static const char* DependencyGroupName(DependencyGroup group);
-
   // Get/Set {object}'s {DependentCode}.
   static DependentCode GetDependentCode(Handle<HeapObject> object);
   static void SetDependentCode(Handle<HeapObject> object,
                                Handle<DependentCode> dep);
 
-  static Handle<DependentCode> New(Isolate* isolate, DependencyGroup group,
-                                   Handle<Code> code,
-                                   Handle<DependentCode> next);
-  static Handle<DependentCode> EnsureSpace(Isolate* isolate,
-                                           Handle<DependentCode> entries);
+  static Handle<DependentCode> New(Isolate* isolate, DependencyGroups groups,
+                                   Handle<Code> code);
   static Handle<DependentCode> InsertWeakCode(Isolate* isolate,
                                               Handle<DependentCode> entries,
-                                              DependencyGroup group,
+                                              DependencyGroups groups,
                                               Handle<Code> code);
 
-  // Compact by removing cleared weak cells and return true if there was
-  // any cleared weak cell.
-  bool Compact();
+  // The callback is called for all non-cleared entries, and should return true
+  // iff the current entry should be cleared.
+  using IterateAndCompactFn = std::function<bool(CodeT, DependencyGroups)>;
+  void IterateAndCompact(const IterateAndCompactFn& fn);
 
-  static int Grow(int number_of_entries) {
-    if (number_of_entries < 5) return number_of_entries + 1;
-    return number_of_entries * 5 / 4;
+  // Fills the given entry with the last non-cleared entry in this list, and
+  // returns the new length after the last non-cleared entry has been moved.
+  int FillEntryFromBack(int index, int length);
+
+  static constexpr int LengthFor(int number_of_entries) {
+    return number_of_entries * kSlotsPerEntry;
   }
 
-  static const int kGroupCount = kAllocationSiteTransitionChangedGroup + 1;
-  static const int kNextLinkIndex = 0;
-  static const int kFlagsIndex = 1;
-  static const int kCodesStartIndex = 2;
-
-  inline void set_next_link(DependentCode next);
-  inline void set_count(int value);
-  inline void set_object_at(int i, MaybeObject object);
-  inline void clear_at(int i);
-  inline void copy(int from, int to);
-
-  inline int flags();
-  inline void set_flags(int flags);
-  using GroupField = base::BitField<int, 0, 5>;
-  using CountField = base::BitField<int, 5, 27>;
-  STATIC_ASSERT(kGroupCount <= GroupField::kMax + 1);
-
-  OBJECT_CONSTRUCTORS(DependentCode, WeakFixedArray);
+  OBJECT_CONSTRUCTORS(DependentCode, WeakArrayList);
 };
 
+DEFINE_OPERATORS_FOR_FLAGS(DependentCode::DependencyGroups)
+
 // BytecodeArray represents a sequence of interpreter bytecodes.
-class BytecodeArray : public FixedArrayBase {
+class BytecodeArray
+    : public TorqueGeneratedBytecodeArray<BytecodeArray, FixedArrayBase> {
  public:
   enum Age {
     kNoAgeBytecodeAge = 0,
@@ -879,21 +926,6 @@ class BytecodeArray : public FixedArrayBase {
   inline Age bytecode_age() const;
   inline void set_bytecode_age(Age age);
 
-  // Accessors for the constant pool.
-  DECL_ACCESSORS(constant_pool, FixedArray)
-
-  // Accessors for handler table containing offsets of exception handlers.
-  DECL_ACCESSORS(handler_table, ByteArray)
-
-  // Accessors for source position table. Can contain:
-  // * undefined (initial value)
-  // * empty_byte_array (for bytecode generated for functions that will never
-  // have source positions, e.g. native functions).
-  // * ByteArray (when source positions have been collected for the bytecode)
-  // * exception (when an error occurred while explicitly collecting source
-  // positions for pre-existing bytecode).
-  DECL_RELEASE_ACQUIRE_ACCESSORS(source_position_table, Object)
-
   inline bool HasSourcePositionTable() const;
   inline bool DidSourcePositionGenerationFail() const;
 
@@ -906,8 +938,6 @@ class BytecodeArray : public FixedArrayBase {
   // |SourcePositionTable| will return an empty byte array rather than crashing
   // as it would if no attempt was ever made to collect source positions.
   inline void SetSourcePositionsFailedToCollect();
-
-  DECL_CAST(BytecodeArray)
 
   // Dispatched behavior.
   inline int BytecodeArraySize();
@@ -933,14 +963,10 @@ class BytecodeArray : public FixedArrayBase {
   // is deterministic.
   inline void clear_padding();
 
-  // Layout description.
-  DEFINE_FIELD_OFFSET_CONSTANTS(FixedArrayBase::kHeaderSize,
-                                TORQUE_GENERATED_BYTECODE_ARRAY_FIELDS)
-
   // InterpreterEntryTrampoline expects these fields to be next to each other
   // and writes a 16-bit value to reset them.
   STATIC_ASSERT(BytecodeArray::kBytecodeAgeOffset ==
-                kOsrNestingLevelOffset + kCharSize);
+                kOsrLoopNestingLevelOffset + kCharSize);
 
   // Maximal memory consumption for a single BytecodeArray.
   static const int kMaxSize = 512 * MB;
@@ -949,7 +975,29 @@ class BytecodeArray : public FixedArrayBase {
 
   class BodyDescriptor;
 
-  OBJECT_CONSTRUCTORS(BytecodeArray, FixedArrayBase);
+ private:
+  // Hide accessors inherited from generated class. Use parameter_count instead.
+  DECL_INT_ACCESSORS(parameter_size)
+
+  TQ_OBJECT_CONSTRUCTORS(BytecodeArray)
+};
+
+// This class holds data required during deoptimization. It does not have its
+// own instance type.
+class DeoptimizationLiteralArray : public WeakFixedArray {
+ public:
+  // Getters for literals. These include runtime checks that the pointer was not
+  // cleared, if the literal was held weakly.
+  inline Object get(int index) const;
+  inline Object get(PtrComprCageBase cage_base, int index) const;
+
+  // Setter for literals. This will set the object as strong or weak depending
+  // on Code::IsWeakObjectInOptimizedCode.
+  inline void set(int index, Object value);
+
+  DECL_CAST(DeoptimizationLiteralArray)
+
+  OBJECT_CONSTRUCTORS(DeoptimizationLiteralArray, WeakFixedArray);
 };
 
 // DeoptimizationData is a fixed array used to hold the deoptimization data for
@@ -978,7 +1026,12 @@ class DeoptimizationData : public FixedArray {
   static const int kBytecodeOffsetRawOffset = 0;
   static const int kTranslationIndexOffset = 1;
   static const int kPcOffset = 2;
+#ifdef DEBUG
+  static const int kNodeIdOffset = 3;
+  static const int kDeoptEntrySize = 4;
+#else   // DEBUG
   static const int kDeoptEntrySize = 3;
+#endif  // DEBUG
 
 // Simple element accessors.
 #define DECL_ELEMENT_ACCESSORS(name, type) \
@@ -987,7 +1040,7 @@ class DeoptimizationData : public FixedArray {
 
   DECL_ELEMENT_ACCESSORS(TranslationByteArray, TranslationArray)
   DECL_ELEMENT_ACCESSORS(InlinedFunctionCount, Smi)
-  DECL_ELEMENT_ACCESSORS(LiteralArray, FixedArray)
+  DECL_ELEMENT_ACCESSORS(LiteralArray, DeoptimizationLiteralArray)
   DECL_ELEMENT_ACCESSORS(OsrBytecodeOffset, Smi)
   DECL_ELEMENT_ACCESSORS(OsrPcOffset, Smi)
   DECL_ELEMENT_ACCESSORS(OptimizationId, Smi)
@@ -1007,6 +1060,9 @@ class DeoptimizationData : public FixedArray {
   DECL_ENTRY_ACCESSORS(BytecodeOffsetRaw, Smi)
   DECL_ENTRY_ACCESSORS(TranslationIndex, Smi)
   DECL_ENTRY_ACCESSORS(Pc, Smi)
+#ifdef DEBUG
+  DECL_ENTRY_ACCESSORS(NodeId, Smi)
+#endif  // DEBUG
 
 #undef DECL_ENTRY_ACCESSORS
 

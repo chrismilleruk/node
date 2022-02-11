@@ -12,6 +12,7 @@
 #include "src/ast/scopes.h"
 #include "src/codegen/compiler.h"
 #include "src/codegen/unoptimized-compilation-info.h"
+#include "src/common/globals.h"
 #include "src/execution/local-isolate.h"
 #include "src/heap/parked-scope.h"
 #include "src/init/bootstrapper.h"
@@ -34,6 +35,7 @@ namespace interpreter {
 class InterpreterCompilationJob final : public UnoptimizedCompilationJob {
  public:
   InterpreterCompilationJob(ParseInfo* parse_info, FunctionLiteral* literal,
+                            Handle<Script> script,
                             AccountingAllocator* allocator,
                             std::vector<FunctionLiteral*>* eager_inner_literals,
                             LocalIsolate* local_isolate);
@@ -169,7 +171,7 @@ bool ShouldPrintBytecode(Handle<SharedFunctionInfo> shared) {
 }  // namespace
 
 InterpreterCompilationJob::InterpreterCompilationJob(
-    ParseInfo* parse_info, FunctionLiteral* literal,
+    ParseInfo* parse_info, FunctionLiteral* literal, Handle<Script> script,
     AccountingAllocator* allocator,
     std::vector<FunctionLiteral*>* eager_inner_literals,
     LocalIsolate* local_isolate)
@@ -178,8 +180,9 @@ InterpreterCompilationJob::InterpreterCompilationJob(
       zone_(allocator, ZONE_NAME),
       compilation_info_(&zone_, parse_info, literal),
       local_isolate_(local_isolate),
-      generator_(&zone_, &compilation_info_, parse_info->ast_string_constants(),
-                 eager_inner_literals) {}
+      generator_(local_isolate, &zone_, &compilation_info_,
+                 parse_info->ast_string_constants(), eager_inner_literals,
+                 script) {}
 
 InterpreterCompilationJob::Status InterpreterCompilationJob::ExecuteJobImpl() {
   RCS_SCOPE(parse_info()->runtime_call_stats(),
@@ -195,8 +198,7 @@ InterpreterCompilationJob::Status InterpreterCompilationJob::ExecuteJobImpl() {
     MaybePrintAst(parse_info(), compilation_info());
   }
 
-  base::Optional<ParkedScope> parked_scope;
-  if (local_isolate_) parked_scope.emplace(local_isolate_);
+  ParkedScope parked_scope(local_isolate_);
 
   generator()->GenerateBytecode(stack_limit());
 
@@ -302,12 +304,13 @@ InterpreterCompilationJob::Status InterpreterCompilationJob::DoFinalizeJobImpl(
 }
 
 std::unique_ptr<UnoptimizedCompilationJob> Interpreter::NewCompilationJob(
-    ParseInfo* parse_info, FunctionLiteral* literal,
+    ParseInfo* parse_info, FunctionLiteral* literal, Handle<Script> script,
     AccountingAllocator* allocator,
     std::vector<FunctionLiteral*>* eager_inner_literals,
     LocalIsolate* local_isolate) {
   return std::make_unique<InterpreterCompilationJob>(
-      parse_info, literal, allocator, eager_inner_literals, local_isolate);
+      parse_info, literal, script, allocator, eager_inner_literals,
+      local_isolate);
 }
 
 std::unique_ptr<UnoptimizedCompilationJob>
@@ -316,7 +319,7 @@ Interpreter::NewSourcePositionCollectionJob(
     Handle<BytecodeArray> existing_bytecode, AccountingAllocator* allocator,
     LocalIsolate* local_isolate) {
   auto job = std::make_unique<InterpreterCompilationJob>(
-      parse_info, literal, allocator, nullptr, local_isolate);
+      parse_info, literal, Handle<Script>(), allocator, nullptr, local_isolate);
   job->compilation_info()->SetBytecodeArray(existing_bytecode);
   return job;
 }
@@ -389,11 +392,9 @@ uintptr_t Interpreter::GetDispatchCounter(Bytecode from, Bytecode to) const {
                                            to_index];
 }
 
-Local<v8::Object> Interpreter::GetDispatchCountersObject() {
-  v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(isolate_);
-  Local<v8::Context> context = isolate->GetCurrentContext();
-
-  Local<v8::Object> counters_map = v8::Object::New(isolate);
+Handle<JSObject> Interpreter::GetDispatchCountersObject() {
+  Handle<JSObject> counters_map =
+      isolate_->factory()->NewJSObjectWithNullProto();
 
   // Output is a JSON-encoded object of objects.
   //
@@ -408,30 +409,23 @@ Local<v8::Object> Interpreter::GetDispatchCountersObject() {
 
   for (int from_index = 0; from_index < kNumberOfBytecodes; ++from_index) {
     Bytecode from_bytecode = Bytecodes::FromByte(from_index);
-    Local<v8::Object> counters_row = v8::Object::New(isolate);
+    Handle<JSObject> counters_row =
+        isolate_->factory()->NewJSObjectWithNullProto();
 
     for (int to_index = 0; to_index < kNumberOfBytecodes; ++to_index) {
       Bytecode to_bytecode = Bytecodes::FromByte(to_index);
       uintptr_t counter = GetDispatchCounter(from_bytecode, to_bytecode);
 
       if (counter > 0) {
-        std::string to_name = Bytecodes::ToString(to_bytecode);
-        Local<v8::String> to_name_object =
-            v8::String::NewFromUtf8(isolate, to_name.c_str()).ToLocalChecked();
-        Local<v8::Number> counter_object = v8::Number::New(isolate, counter);
-        CHECK(counters_row
-                  ->DefineOwnProperty(context, to_name_object, counter_object)
-                  .IsJust());
+        Handle<Object> value = isolate_->factory()->NewNumberFromSize(counter);
+        JSObject::AddProperty(isolate_, counters_row,
+                              Bytecodes::ToString(to_bytecode), value, NONE);
       }
     }
 
-    std::string from_name = Bytecodes::ToString(from_bytecode);
-    Local<v8::String> from_name_object =
-        v8::String::NewFromUtf8(isolate, from_name.c_str()).ToLocalChecked();
-
-    CHECK(
-        counters_map->DefineOwnProperty(context, from_name_object, counters_row)
-            .IsJust());
+    JSObject::AddProperty(isolate_, counters_map,
+                          Bytecodes::ToString(from_bytecode), counters_row,
+                          NONE);
   }
 
   return counters_map;

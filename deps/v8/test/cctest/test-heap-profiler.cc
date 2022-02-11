@@ -31,6 +31,7 @@
 
 #include <memory>
 
+#include "include/v8-function.h"
 #include "include/v8-profiler.h"
 #include "src/api/api-inl.h"
 #include "src/base/hashmap.h"
@@ -77,10 +78,10 @@ class NamedEntriesDetector {
     list.push_back(root);
     CheckEntry(root);
     while (!list.empty()) {
-      i::HeapEntry* entry = list.back();
+      i::HeapEntry* heap_entry = list.back();
       list.pop_back();
-      for (int i = 0; i < entry->children_count(); ++i) {
-        i::HeapGraphEdge* edge = entry->child(i);
+      for (int i = 0; i < heap_entry->children_count(); ++i) {
+        i::HeapGraphEdge* edge = heap_entry->child(i);
         if (edge->type() == i::HeapGraphEdge::kShortcut) continue;
         i::HeapEntry* child = edge->to();
         v8::base::HashMap::Entry* entry = visited.LookupOrInsert(
@@ -188,9 +189,9 @@ static bool HasString(v8::Isolate* isolate, const v8::HeapGraphNode* node,
                       const char* contents) {
   for (int i = 0, count = node->GetChildrenCount(); i < count; ++i) {
     const v8::HeapGraphEdge* prop = node->GetChild(i);
-    const v8::HeapGraphNode* node = prop->GetToNode();
-    if (node->GetType() == v8::HeapGraphNode::kString) {
-      v8::String::Utf8Value node_name(isolate, node->GetName());
+    const v8::HeapGraphNode* dest_node = prop->GetToNode();
+    if (dest_node->GetType() == v8::HeapGraphNode::kString) {
+      v8::String::Utf8Value node_name(isolate, dest_node->GetName());
       if (strcmp(contents, *node_name) == 0) return true;
     }
   }
@@ -1555,7 +1556,7 @@ class TestActivityControl : public v8::ActivityControl {
         total_(0),
         abort_count_(abort_count),
         reported_finish_(false) {}
-  ControlOption ReportProgressValue(int done, int total) override {
+  ControlOption ReportProgressValue(uint32_t done, uint32_t total) override {
     done_ = done;
     total_ = total;
     CHECK_LE(done_, total_);
@@ -1872,7 +1873,7 @@ TEST(NativeSnapshotObjectIdMoving) {
   CHECK_NOT_NULL(merged_node);
 
   {
-    v8::HandleScope scope(isolate);
+    v8::HandleScope inner_scope(isolate);
     auto local = v8::Local<v8::String>::New(isolate, wrapper);
     i::Handle<i::String> internal = i::Handle<i::String>::cast(
         v8::Utils::OpenHandle(*v8::Local<v8::String>::Cast(local)));
@@ -2087,7 +2088,7 @@ TEST(GetHeapValueForDeletedObject) {
   {
     // Perform the check inside a nested local scope to avoid creating a
     // reference to the object we are deleting.
-    v8::HandleScope scope(env->GetIsolate());
+    v8::HandleScope inner_scope(env->GetIsolate());
     CHECK(heap_profiler->FindObjectById(prop->GetId())->IsObject());
   }
   CompileRun("delete a.p;");
@@ -2358,7 +2359,7 @@ TEST(HiddenPropertiesFastCase) {
       GetProperty(isolate, global, v8::HeapGraphEdge::kProperty, "c");
   CHECK(c);
   const v8::HeapGraphNode* hidden_props =
-      GetProperty(isolate, global, v8::HeapGraphEdge::kProperty, "<symbol>");
+      GetProperty(isolate, c, v8::HeapGraphEdge::kProperty, "<symbol key>");
   CHECK(!hidden_props);
 
   v8::Local<v8::Value> cHandle =
@@ -2377,10 +2378,32 @@ TEST(HiddenPropertiesFastCase) {
   c = GetProperty(isolate, global, v8::HeapGraphEdge::kProperty, "c");
   CHECK(c);
   hidden_props =
-      GetProperty(isolate, c, v8::HeapGraphEdge::kProperty, "<symbol>");
+      GetProperty(isolate, c, v8::HeapGraphEdge::kProperty, "<symbol key>");
   CHECK(hidden_props);
 }
 
+TEST(SymbolsAndPrivateClassFields) {
+  v8::Isolate* isolate = CcTest::isolate();
+  LocalContext env;
+  v8::HandleScope scope(isolate);
+  v8::HeapProfiler* heap_profiler = isolate->GetHeapProfiler();
+
+  CompileRun(
+      "class C { #private = this; [Symbol('MySymbol')] = this; };\n"
+      "c = new C;\n");
+  const v8::HeapSnapshot* snapshot = heap_profiler->TakeHeapSnapshot();
+  CHECK(ValidateSnapshot(snapshot));
+  const v8::HeapGraphNode* global = GetGlobalObject(snapshot);
+  const v8::HeapGraphNode* c =
+      GetProperty(isolate, global, v8::HeapGraphEdge::kProperty, "c");
+  CHECK(c);
+  const v8::HeapGraphNode* prop;
+  prop = GetProperty(isolate, c, v8::HeapGraphEdge::kProperty, "#private");
+  CHECK(prop);
+  prop = GetProperty(isolate, c, v8::HeapGraphEdge::kProperty,
+                     "<symbol MySymbol>");
+  CHECK(prop);
+}
 
 TEST(AccessorInfo) {
   LocalContext env;
@@ -4175,7 +4198,7 @@ TEST(HeapSnapshotDeleteDuringTakeSnapshot) {
     WeakData* data =
         new WeakData{heap_profiler->TakeHeapSnapshot(), &gc_calls, &handle};
 
-    v8::HandleScope scope(env->GetIsolate());
+    v8::HandleScope inner_scope(env->GetIsolate());
     handle.Reset(env->GetIsolate(), v8::Object::New(env->GetIsolate()));
     handle.SetWeak(
         data,

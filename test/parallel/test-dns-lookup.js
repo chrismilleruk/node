@@ -39,14 +39,14 @@ common.expectWarning({
 assert.throws(() => {
   dns.lookup(false, 'cb');
 }, {
-  code: 'ERR_INVALID_CALLBACK',
+  code: 'ERR_INVALID_ARG_TYPE',
   name: 'TypeError'
 });
 
 assert.throws(() => {
   dns.lookup(false, 'options', 'cb');
 }, {
-  code: 'ERR_INVALID_CALLBACK',
+  code: 'ERR_INVALID_ARG_TYPE',
   name: 'TypeError'
 });
 
@@ -137,7 +137,7 @@ dns.lookup('127.0.0.1', {
   family: 4,
   all: false
 }, common.mustSucceed((result, addressType) => {
-  assert.deepStrictEqual(result, '127.0.0.1');
+  assert.strictEqual(result, '127.0.0.1');
   assert.strictEqual(addressType, 4);
 }));
 
