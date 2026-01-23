@@ -4,6 +4,7 @@
 
 #include "src/execution/local-isolate.h"
 
+#include "src/base/fpu.h"
 #include "src/bigint/bigint.h"
 #include "src/execution/isolate.h"
 #include "src/execution/thread-id.h"
@@ -14,8 +15,7 @@
 namespace v8 {
 namespace internal {
 
-LocalIsolate::LocalIsolate(Isolate* isolate, ThreadKind kind,
-                           RuntimeCallStats* runtime_call_stats)
+LocalIsolate::LocalIsolate(Isolate* isolate, ThreadKind kind)
     : HiddenLocalFactory(isolate),
       heap_(isolate->heap(), kind),
       isolate_(isolate),
@@ -23,16 +23,23 @@ LocalIsolate::LocalIsolate(Isolate* isolate, ThreadKind kind,
       thread_id_(ThreadId::Current()),
       stack_limit_(kind == ThreadKind::kMain
                        ? isolate->stack_guard()->real_climit()
-                       : GetCurrentStackPosition() - FLAG_stack_size * KB),
-      runtime_call_stats_(kind == ThreadKind::kMain &&
-                                  runtime_call_stats == nullptr
-                              ? isolate->counters()->runtime_call_stats()
-                              : runtime_call_stats)
+                       : GetCurrentStackPosition() - v8_flags.stack_size * KB)
 #ifdef V8_INTL_SUPPORT
       ,
       default_locale_(isolate->DefaultLocale())
 #endif
 {
+  // LocalIsolate owning threads need to make sure to match the isolate's FPU
+  // state.
+  DCHECK_EQ(base::FPU::GetFlushDenormals(), isolate->flush_denormals());
+#ifdef V8_RUNTIME_CALL_STATS
+  if (kind == ThreadKind::kMain) {
+    runtime_call_stats_ = isolate->counters()->runtime_call_stats();
+  } else {
+    rcs_scope_.emplace(isolate->counters()->worker_thread_runtime_call_stats());
+    runtime_call_stats_ = rcs_scope_->Get();
+  }
+#endif
 }
 
 LocalIsolate::~LocalIsolate() {
@@ -45,19 +52,11 @@ void LocalIsolate::RegisterDeserializerStarted() {
 void LocalIsolate::RegisterDeserializerFinished() {
   return isolate_->RegisterDeserializerFinished();
 }
+bool LocalIsolate::has_active_deserializer() const {
+  return isolate_->has_active_deserializer();
+}
 
 int LocalIsolate::GetNextScriptId() { return isolate_->GetNextScriptId(); }
-
-#if V8_SFI_HAS_UNIQUE_ID
-int LocalIsolate::GetNextUniqueSharedFunctionInfoId() {
-  return isolate_->GetNextUniqueSharedFunctionInfoId();
-}
-#endif  // V8_SFI_HAS_UNIQUE_ID
-
-bool LocalIsolate::is_collecting_type_profile() const {
-  // TODO(leszeks): Figure out if it makes sense to check this asynchronously.
-  return isolate_->is_collecting_type_profile();
-}
 
 // Used for lazy initialization, based on an assumption that most
 // LocalIsolates won't be used to parse any BigInt literals.

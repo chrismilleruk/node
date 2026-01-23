@@ -9,7 +9,9 @@
   * [Benchmark analysis requirements](#benchmark-analysis-requirements)
 * [Running benchmarks](#running-benchmarks)
   * [Running individual benchmarks](#running-individual-benchmarks)
+  * [Calibrating the number of iterations with calibrate-n.js](#calibrating-the-number-of-iterations-with-calibrate-njs)
   * [Running all benchmarks](#running-all-benchmarks)
+  * [Specifying CPU Cores for Benchmarks with run.js](#specifying-cpu-cores-for-benchmarks-with-runjs)
   * [Filtering benchmarks](#filtering-benchmarks)
   * [Comparing Node.js versions](#comparing-nodejs-versions)
   * [Comparing parameters](#comparing-parameters)
@@ -23,6 +25,10 @@
 Basic Unix tools are required for some benchmarks.
 [Git for Windows][git-for-windows] includes Git Bash and the necessary tools,
 which need to be included in the global Windows `PATH`.
+
+If you are using Nix, all the required tools are already listed in the
+`benchmarkTools` argument of the `shell.nix` file, so you can skip those
+prerequisites.
 
 ### HTTP benchmark requirements
 
@@ -41,16 +47,19 @@ By default, `wrk` will be used as the benchmarker. If it is not available,
 `autocannon` will be used in its place. When creating an HTTP benchmark, the
 benchmarker to be used should be specified by providing it as an argument:
 
-`node benchmark/run.js --set benchmarker=autocannon http`
-
-`node benchmark/http/simple.js benchmarker=autocannon`
+```bash
+node benchmark/run.js --set benchmarker=autocannon http
+node benchmark/http/simple.js benchmarker=autocannon
+```
 
 #### HTTPS benchmark requirements
 
 To run the `https` benchmarks, one of `autocannon` or `wrk` benchmarkers must
 be used.
 
-`node benchmark/https/simple.js benchmarker=autocannon`
+```bash
+node benchmark/https/simple.js benchmarker=autocannon
+```
 
 #### HTTP/2 benchmark requirements
 
@@ -58,7 +67,9 @@ To run the `http2` benchmarks, the `h2load` benchmarker must be used. The
 `h2load` tool is a component of the `nghttp2` project and may be installed
 from [nghttp2.org][] or built from source.
 
-`node benchmark/http2/simple.js benchmarker=h2load`
+```bash
+node benchmark/http2/simple.js benchmarker=h2load
+```
 
 ### Benchmark analysis requirements
 
@@ -92,6 +103,16 @@ Of course, use an appropriate mirror based on location.
 A list of mirrors is [located here](https://cran.r-project.org/mirrors.html).
 
 ## Running benchmarks
+
+### Setting CPU Frequency scaling governor to "performance"
+
+It is recommended to set the CPU frequency to `performance` before running
+benchmarks. This increases the likelihood of each benchmark achieving peak performance
+according to the hardware. Therefore, run:
+
+```console
+$ ./benchmark/cpu.sh fast
+```
 
 ### Running individual benchmarks
 
@@ -131,6 +152,46 @@ buffers/buffer-tostring.js n=10000000 len=1024 arg=true: 3498295.68561504
 buffers/buffer-tostring.js n=10000000 len=1024 arg=false: 3783071.1678948295
 ```
 
+### Calibrating the number of iterations with calibrate-n.js
+
+Before running benchmarks, it's often useful to determine the optimal number of iterations (`n`)
+that provides statistically stable results. The `calibrate-n.js` tool helps find this value by
+running a benchmark multiple times with increasing `n` values until the coefficient of variation (CV)
+falls below a target threshold.
+
+```console
+$ node benchmark/calibrate-n.js benchmark/buffers/buffer-compare.js
+
+--------------------------------------------------------
+Benchmark: buffers/buffer-compare.js
+--------------------------------------------------------
+What we are trying to find: The optimal number of iterations (n)
+that produces consistent benchmark results without wasting time.
+
+How it works:
+1. Run the benchmark multiple times with a specific n value
+2. Group results by configuration
+3. If overall CV is above 5% or any configuration has CV above 10%, increase n and try again
+4. Stop when we have stable results (overall CV < 5% and all configs CV < 10%) or max increases reached
+
+Configuration:
+- Starting n: 10 iterations
+- Runs per n value: 30
+- Target CV threshold: 5% (lower CV = more stable results)
+- Max increases: 6
+- Increase factor: 10x
+```
+
+The tool accepts several options:
+
+* `--runs=N`: Number of runs for each n value (default: 30)
+* `--cv-threshold=N`: Target coefficient of variation threshold (default: 0.05)
+* `--max-increases=N`: Maximum number of n increases to try (default: 6)
+* `--start-n=N`: Initial n value to start with (default: 10)
+* `--increase=N`: Factor by which to increase n (default: 10)
+
+Once you've determined a stable `n` value, you can use it when running your benchmarks.
+
 ### Running all benchmarks
 
 Similar to running individual benchmarks, a group of benchmarks can be executed
@@ -159,9 +220,46 @@ assert/deepequal-object.js method="notDeepEqual" strict=0 size=100 n=5000: 9,734
 
 It is possible to execute more groups by adding extra process arguments.
 
-```console
-$ node benchmark/run.js assert async_hooks
+```bash
+node benchmark/run.js assert async_hooks
 ```
+
+It's also possible to execute the benchmark more than once using the
+`--runs` flag.
+
+```bash
+node benchmark/run.js --runs 10 assert async_hooks
+```
+
+This command will run the benchmark files in `benchmark/assert` and `benchmark/async_hooks`
+10 times each.
+
+#### Specifying CPU Cores for Benchmarks with run.js
+
+When using `run.js` to execute a group of benchmarks,
+you can specify on which CPU cores the
+benchmarks should execute
+by using the `--set CPUSET=value` option.
+This controls the CPU core
+affinity for the benchmark process,
+potentially reducing
+interference from other processes and allowing
+for performance
+testing under specific hardware configurations.
+
+The `CPUSET` option utilizes the `taskset` command's format
+for setting CPU affinity, where `value` can be a single core
+number or a range of cores.
+
+Examples:
+
+* `node benchmark/run.js --set CPUSET=0` ... runs benchmarks on CPU core 0.
+* `node benchmark/run.js --set CPUSET=0-2` ...
+  specifies that benchmarks should run on CPU cores 0 to 2.
+
+Note: This option is only applicable when using `run.js`.
+Ensure the `taskset` command is available on your system
+and the specified `CPUSET` format matches its requirements.
 
 #### Filtering benchmarks
 
@@ -244,6 +342,19 @@ process/bench-env.js operation="query" n=1000000: 3,625,787.2150573144
 process/bench-env.js operation="delete" n=1000000: 1,521,131.5742806569
 ```
 
+#### Grouping benchmarks
+
+Benchmarks can also have groups, giving the developer greater flexibility in differentiating between test cases
+and also helping reduce the time to run the combination of benchmark parameters.
+
+By default, all groups are executed when running the benchmark.
+However, it is possible to specify individual groups by setting the
+`NODE_RUN_BENCHMARK_GROUPS` environment variable when running `compare.js`:
+
+```bash
+NODE_RUN_BENCHMARK_GROUPS=fewHeaders,manyHeaders node http/headers.js
+```
+
 ### Comparing Node.js versions
 
 To compare the effect of a new Node.js version use the `compare.js` tool. This
@@ -254,29 +365,29 @@ run `node benchmark/compare.js`.
 As an example on how to check for a possible performance improvement, the
 [#5134](https://github.com/nodejs/node/pull/5134) pull request will be used as
 an example. This pull request _claims_ to improve the performance of the
-`string_decoder` module.
+`node:string_decoder` module.
 
-First build two versions of Node.js, one from the master branch (here called
-`./node-master`) and another with the pull request applied (here called
+First build two versions of Node.js, one from the `main` branch (here called
+`./node-main`) and another with the pull request applied (here called
 `./node-pr-5134`).
 
 To run multiple compiled versions in parallel you need to copy the output of the
-build: `cp ./out/Release/node ./node-master`. Check out the following example:
+build: `cp ./out/Release/node ./node-main`. Check out the following example:
 
-```console
-$ git checkout master
-$ ./configure && make -j4
-$ cp ./out/Release/node ./node-master
+```bash
+git checkout main
+./configure && make -j4
+cp ./out/Release/node ./node-main
 
-$ git checkout pr-5134
-$ ./configure && make -j4
-$ cp ./out/Release/node ./node-pr-5134
+git checkout pr-5134
+./configure && make -j4
+cp ./out/Release/node ./node-pr-5134
 ```
 
 The `compare.js` tool will then produce a csv file with the benchmark results.
 
-```console
-$ node benchmark/compare.js --old ./node-master --new ./node-pr-5134 string_decoder > compare-pr-5134.csv
+```bash
+node benchmark/compare.js --old ./node-main --new ./node-pr-5134 string_decoder > compare-pr-5134.csv
 ```
 
 _Tips: there are some useful options of `benchmark/compare.js`. For example,
@@ -288,12 +399,23 @@ module, you can use the `--filter` option:_
   --old      ./old-node-binary  old node binary (required)
   --runs     30                 number of samples
   --filter   pattern            string to filter benchmark scripts
+  --exclude  pattern            excludes scripts matching <pattern> (can be
+                                repeated)
   --set      variable=value     set benchmark variable (can be repeated)
   --no-progress                 don't show benchmark progress indicator
+
+    Examples:
+    --set CPUSET=0            Runs benchmarks on CPU core 0.
+    --set CPUSET=0-2          Specifies that benchmarks should run on CPU cores 0 to 2.
+
+  Note: The CPUSET format should match the specifications of the 'taskset' command
 ```
 
-For analysing the benchmark results, use [node-benchmark-compare][] or the R
-script `benchmark/compare.R`.
+For analyzing the benchmark results, use [node-benchmark-compare][] or the R
+scripts:
+
+* `benchmark/compare.R`
+* `benchmark/bar.R`
 
 ```console
 $ node-benchmark-compare compare-pr-5134.csv # or cat compare-pr-5134.csv | Rscript benchmark/compare.R
@@ -358,8 +480,8 @@ To do this use the `scatter.js` tool, this will run a benchmark multiple times
 and generate a csv with the results. To see how to use this script,
 run `node benchmark/scatter.js`.
 
-```console
-$ node benchmark/scatter.js benchmark/string_decoder/string-decoder.js > scatter.csv
+```bash
+node benchmark/scatter.js benchmark/string_decoder/string-decoder.js > scatter.csv
 ```
 
 After generating the csv, a comparison table can be created using the
@@ -450,8 +572,55 @@ The arguments of `createBenchmark` are:
   possible combinations of these parameters, unless specified otherwise.
   Each configuration is a property with an array of possible values.
   The configuration values can only be strings or numbers.
-* `options` {Object} The benchmark options. At the moment only the `flags`
-  option for specifying command line flags is supported.
+* `options` {Object} The benchmark options. Supported options:
+  * `flags` {Array} Contains node-specific command line flags to pass to
+    the child process.
+
+  * `byGroups` {Boolean} option for processing `configs` by groups:
+    ```js
+    const bench = common.createBenchmark(main, {
+      groupA: {
+        source: ['array'],
+        len: [10, 2048],
+        n: [50],
+      },
+      groupB: {
+        source: ['buffer', 'string'],
+        len: [2048],
+        n: [50, 2048],
+      },
+    }, { byGroups: true });
+    ```
+
+  * `combinationFilter` {Function} Has a single parameter which is an object
+    containing a combination of benchmark parameters. It should return `true`
+    or `false` to indicate whether the combination should be included or not.
+
+  * `setup` {Function} A function that will be run once in the root process
+    before the benchmark combinations are executed in child processes.
+    It can be used to setup any global state required by the benchmark. Note
+    that the JavaScript heap state will not be shared with the benchmark processes,
+    so don't try to access any variables created in the `setup` function from
+    the `main` function, for example.
+    The argument passed into it is an array of all the combinations of
+    configurations that will be executed.
+    If tear down is necessary, register a listener for the `exit` event on
+    `process` inside the `setup` function. In the example below, that's done
+    by `tmpdir.refresh()`.
+
+    ```js
+    const tmpdir = require('../../test/common/tmpdir');
+    const bench = common.createBenchmark(main, {
+      type: ['fast', 'slow'],
+      n: [1e4],
+    }, {
+      setup(configs) {
+        tmpdir.refresh();
+        const maxN = configs.reduce((max, c) => Math.max(max, c.n), 0);
+        setupFixturesReusedForAllBenchmarks(maxN);
+      },
+    });
+    ```
 
 `createBenchmark` returns a `bench` object, which is used for timing
 the runtime of the benchmark. Run `bench.start()` after the initialization
@@ -479,19 +648,19 @@ the code inside the `main` function if it's more than just declaration.
 ```js
 'use strict';
 const common = require('../common.js');
-const { SlowBuffer } = require('buffer');
+const { Buffer } = require('node:buffer');
 
 const configs = {
   // Number of operations, specified here so they show up in the report.
   // Most benchmarks just use one value for all runs.
   n: [1024],
   type: ['fast', 'slow'],  // Custom configurations
-  size: [16, 128, 1024]  // Custom configurations
+  size: [16, 128, 1024],  // Custom configurations
 };
 
 const options = {
   // Add --expose-internals in order to require internal modules in main
-  flags: ['--zero-fill-buffers']
+  flags: ['--zero-fill-buffers'],
 };
 
 // `main` and `configs` are required, `options` is optional.
@@ -510,10 +679,11 @@ function main(conf) {
   bench.start();
 
   // Do operations here
-  const BufferConstructor = conf.type === 'fast' ? Buffer : SlowBuffer;
 
   for (let i = 0; i < conf.n; i++) {
-    new BufferConstructor(conf.size);
+    conf.type === 'fast' ?
+      Buffer.allocUnsafe(conf.size) :
+      Buffer.allocUnsafeSlow(conf.size);
   }
 
   // End the timer, pass in the number of operations
@@ -535,11 +705,11 @@ const common = require('../common.js');
 const bench = common.createBenchmark(main, {
   kb: [64, 128, 256, 1024],
   connections: [100, 500],
-  duration: 5
+  duration: 5,
 });
 
 function main(conf) {
-  const http = require('http');
+  const http = require('node:http');
   const len = conf.kb * 1024;
   const chunk = Buffer.alloc(len, 'x');
   const server = http.createServer((req, res) => {
@@ -570,5 +740,5 @@ Supported options keys are:
 [git-for-windows]: https://git-scm.com/download/win
 [nghttp2.org]: https://nghttp2.org
 [node-benchmark-compare]: https://github.com/targos/node-benchmark-compare
-[t-test]: https://en.wikipedia.org/wiki/Student%27s_t-test#Equal_or_unequal_sample_sizes.2C_unequal_variances
+[t-test]: https://en.wikipedia.org/wiki/Student%27s_t-test#Equal_or_unequal_sample_sizes%2C_unequal_variances_%28sX1_%3E_2sX2_or_sX2_%3E_2sX1%29
 [wrk]: https://github.com/wg/wrk

@@ -9,12 +9,18 @@ env:
     is still relevant, or to ping the collaborator who labelled it stalled if
     you have any questions.
 
+permissions:
+  contents: read
+
 jobs:
   stale:
+    permissions:
+      issues: write  # for actions/stale to close stale issues
+      pull-requests: write  # for actions/stale to close stale PRs
     if: github.repository == 'nodejs/node'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/stale@v4
+      - uses: actions/stale@5f858e3efba33a5ca4407a664cc011ad407f2008  # v10.1.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           days-before-close: 30
@@ -26,7 +32,5 @@ jobs:
           only-labels: stalled
           # max requests it will send per run to the GitHub API before it deliberately exits to avoid hitting API rate limits
           operations-per-run: 500
-          # deactivates automatic removal of stalled label if issue gets any activity
-          remove-stale-when-updated: false
           # deactivates automatic stale labelling as we prefer to do that manually
           days-before-stale: -1

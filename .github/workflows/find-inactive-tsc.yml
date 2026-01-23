@@ -1,4 +1,4 @@
-name: Find inactive TSC members
+name: Find inactive TSC voting members
 
 on:
   schedule:
@@ -10,6 +10,9 @@ on:
 env:
   NODE_VERSION: lts/*
 
+permissions:
+  contents: read
+
 jobs:
   find:
     if: github.repository == 'nodejs/node'
@@ -17,13 +20,13 @@ jobs:
 
     steps:
       - name: Checkout the repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Clone nodejs/TSC repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
         with:
           fetch-depth: 0
           path: .tmp
@@ -31,15 +34,17 @@ jobs:
           repository: nodejs/TSC
 
       - name: Use Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f  # v6.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Find inactive TSC members
+      - name: Find inactive TSC voting members
         run: tools/find-inactive-tsc.mjs >> $GITHUB_ENV
 
       - name: Open pull request
-        uses: gr2m/create-or-update-pull-request-action@v1
+        uses: gr2m/create-or-update-pull-request-action@77596e3166f328b24613f7082ab30bf2d93079d5
+        # Creates a PR or update the Action's existing PR, or
+        # no-op if the base branch is already up-to-date.
         env:
           GITHUB_TOKEN: ${{ secrets.GH_USER_TOKEN }}
         with:
@@ -51,6 +56,7 @@ jobs:
             @nodejs/tsc ${{ env.INACTIVE_TSC_HANDLES }}
 
             ${{ env.DETAILS_FOR_COMMIT_BODY }}
-          commit-message: 'meta: move one or more TSC members to emeritus'
+          commit-message: 'meta: move TSC voting member(s) to regular member(s)'
           labels: meta
-          title: 'meta: move one or more TSC members to emeritus'
+          title: 'meta: move TSC voting member(s) to regular member(s)'
+          update-pull-request-title-and-body: true

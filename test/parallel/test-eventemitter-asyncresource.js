@@ -7,10 +7,7 @@ const {
   executionAsyncId,
 } = require('async_hooks');
 
-const {
-  deepStrictEqual,
-  strictEqual,
-} = require('assert');
+const assert = require('assert');
 
 const {
   setImmediate: tick,
@@ -40,7 +37,7 @@ function makeHook(trackedTypes) {
 
     before(asyncId) { log(asyncId, 'before'); },
     after(asyncId) { log(asyncId, 'after'); },
-    destroy(asyncId) { log(asyncId, 'destroy'); }
+    destroy(asyncId) { log(asyncId, 'destroy'); },
   }).enable();
 
   return {
@@ -50,7 +47,7 @@ function makeHook(trackedTypes) {
     },
     ids() {
       return new Set(eventMap.keys());
-    }
+    },
   };
 }
 
@@ -66,15 +63,15 @@ function makeHook(trackedTypes) {
   foo.on('someEvent', common.mustCall());
   foo.emit('someEvent');
 
-  deepStrictEqual([foo.asyncId], [...tracer.ids()]);
-  strictEqual(foo.triggerAsyncId, origExecutionAsyncId);
-  strictEqual(foo.asyncResource.eventEmitter, foo);
+  assert.deepStrictEqual([foo.asyncId], [...tracer.ids()]);
+  assert.strictEqual(foo.triggerAsyncId, origExecutionAsyncId);
+  assert.strictEqual(foo.asyncResource.eventEmitter, foo);
 
   foo.emitDestroy();
 
   await tick();
 
-  deepStrictEqual(tracer.done(), new Set([
+  assert.deepStrictEqual(tracer.done(), new Set([
     [
       {
         name: 'init',
@@ -98,7 +95,7 @@ function makeHook(trackedTypes) {
 
   const foo = new Foo('ResourceName');
 
-  deepStrictEqual(tracer.done(), new Set([
+  assert.deepStrictEqual(tracer.done(), new Set([
     [
       {
         name: 'init',
@@ -119,7 +116,7 @@ function makeHook(trackedTypes) {
 
   const foo = new Foo({ name: 'ResourceName' });
 
-  deepStrictEqual(tracer.done(), new Set([
+  assert.deepStrictEqual(tracer.done(), new Set([
     [
       {
         name: 'init',
@@ -130,3 +127,24 @@ function makeHook(trackedTypes) {
     ],
   ]));
 })().then(common.mustCall());
+
+assert.throws(
+  () => EventEmitterAsyncResource.prototype.emit(),
+  { name: 'TypeError', message: /Cannot read private member/ }
+);
+
+assert.throws(
+  () => EventEmitterAsyncResource.prototype.emitDestroy(),
+  { name: 'TypeError', message: /Cannot read private member/ }
+);
+
+['asyncId', 'triggerAsyncId', 'asyncResource'].forEach((getter) => {
+  assert.throws(
+    () => Reflect.get(EventEmitterAsyncResource.prototype, getter, {}),
+    {
+      name: 'TypeError',
+      message: /Cannot read private member/,
+      stack: new RegExp(`at get ${getter}`),
+    }
+  );
+});

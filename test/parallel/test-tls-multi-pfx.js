@@ -21,15 +21,17 @@ const ciphers = [];
 
 const server = tls.createServer(options, function(conn) {
   conn.end('ok');
-}).listen(0, function() {
+}).listen(0, common.mustCall(function() {
   const ecdsa = tls.connect(this.address().port, {
     ciphers: 'ECDHE-ECDSA-AES256-GCM-SHA384',
-    rejectUnauthorized: false
+    maxVersion: 'TLSv1.2',
+    rejectUnauthorized: false,
   }, common.mustCall(function() {
     ciphers.push(ecdsa.getCipher());
     const rsa = tls.connect(server.address().port, {
       ciphers: 'ECDHE-RSA-AES256-GCM-SHA384',
-      rejectUnauthorized: false
+      maxVersion: 'TLSv1.2',
+      rejectUnauthorized: false,
     }, common.mustCall(function() {
       ciphers.push(rsa.getCipher());
       ecdsa.end();
@@ -37,7 +39,7 @@ const server = tls.createServer(options, function(conn) {
       server.close();
     }));
   }));
-});
+}));
 
 process.on('exit', function() {
   assert.deepStrictEqual(ciphers, [{
